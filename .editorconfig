@@ -1,0 +1,62 @@
+# EditorConfig helps developers define and maintain consistent
+# coding styles between different editors and IDEs
+
+# top-most EditorConfig file
+root = true
+
+# Default settings:
+# UTF-8 encoding, LF line endings, 2 spaces indentation
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+tab_width = 2
+insert_final_newline = true
+max_line_length = 100
+trim_trailing_whitespace = true
+ij_continuation_indent_size = 4
+ij_formatter_off_tag = @formatter:off
+ij_formatter_on_tag = @formatter:on
+ij_formatter_tags_enabled = true
+ij_smart_tabs = false
+ij_wrap_on_typing = false
+
+[*.{php,twig}]
+indent_size = 4
+
+[*.blade.php]
+indent_size = 2
+
+[docker-compose.yml]
+indent_size = 4
+
+# Specific settings for TypeScript, JavaScript, JSX and TSX files
+[{*.ats,*.ts,*.tsx}]
+# align multiline parameters
+ij_typescript_align_multiline_parameters = false
+# enforce trailing comma when multiline
+ij_typescript_enforce_trailing_comma = whenmultiline
+# use semicolon after statement
+ij_typescript_use_semicolon_after_statement = true
+
+[{*.cjs,*.js,*.mjs,*.jsx}]
+ij_javascript_align_imports = false
+ij_javascript_align_multiline_parameters = false
+# use semicolon after statement
+ij_javascript_use_semicolon_after_statement = true
+
+[{*.markdown,*.md}]
+trim_trailing_whitespace = false
+ij_wrap_on_typing = true
+ij_markdown_force_one_space_after_blockquote_symbol = true
+ij_markdown_force_one_space_after_header_symbol = true
+ij_markdown_force_one_space_after_list_bullet = true
+ij_markdown_force_one_space_between_words = true
+ij_markdown_keep_indents_on_empty_lines = false
+ij_markdown_max_lines_around_block_elements = 1
+ij_markdown_max_lines_around_header = 1
+ij_markdown_max_lines_between_paragraphs = 1
+ij_markdown_min_lines_around_block_elements = 1
+ij_markdown_min_lines_around_header = 1
+ij_markdown_min_lines_between_paragraphs = 1
