@@ -3,7 +3,7 @@
 # =============================================================================
 # Coder workspace image with PHP build dependencies.
 # Extends ghcr.io/haakco/coder-workspace. Shared by projects that use mise's
-# asdf-php plugin to compile PHP from source: cb (CourierBoost), MacNan, tlm.
+# PHP plugin to compile PHP from source: cb (CourierBoost), MacNan, tlm.
 #
 # Each -dev header maps to one or more PHP extensions (core or PECL):
 #

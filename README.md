@@ -1,6 +1,6 @@
 # docker-coder-workspace-php
 
-Extends [`ghcr.io/haakco/coder-workspace`](https://github.com/haakco/docker-coder-workspace) with the system `-dev` headers needed by `mise`'s `asdf-php` plugin to compile PHP from source.
+Extends [`ghcr.io/haakco/coder-workspace`](https://github.com/haakco/docker-coder-workspace) with the system `-dev` headers needed by `mise`'s PHP plugin to compile PHP from source.
 
 ## What's added on top of the base image
 
