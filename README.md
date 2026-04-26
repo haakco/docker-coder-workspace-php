@@ -4,7 +4,7 @@ Extends [`ghcr.io/haakco/coder-workspace`](https://github.com/haakco/docker-code
 
 ## What's added on top of the base image
 
-Build-time headers for common PHP core extensions (xml, openssl, curl, gd, mbstring, zip, sqlite, readline, intl, bz2, tidy, xsl, sodium, pgsql, gmp, ldap) and for PECL extensions (`imagick`, `rdkafka`, `redis` with zstd). See the [Dockerfile](docker_build/Dockerfile) for the exact mapping.
+Build-time headers for common PHP core extensions (xml, openssl, curl, gd with avif/jpeg/png/webp/xpm, mbstring, zip, sqlite, readline, intl, bz2, tidy, xsl, sodium, pgsql, gmp, ldap) and for PECL extensions (`imagick`, `rdkafka`, `redis` with zstd). See the [Dockerfile](docker_build/Dockerfile) for the exact mapping.
 
 ## Who uses it
 

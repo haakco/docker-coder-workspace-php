@@ -11,7 +11,7 @@
 #     libxml2-dev          → xml, soap, dom, simplexml
 #     libssl-dev           → openssl
 #     libcurl4-openssl-dev → curl
-#     libjpeg/png/webp-dev + libfreetype6-dev → gd
+#     libavif/jpeg/png/webp/xpm-dev + libfreetype6-dev → gd
 #     libonig-dev          → mbstring
 #     libzip-dev           → zip
 #     libsqlite3-dev       → sqlite3, pdo_sqlite
@@ -42,7 +42,7 @@ USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev libssl-dev libcurl4-openssl-dev \
-    libjpeg-dev libpng-dev libwebp-dev libonig-dev \
+    libavif-dev libjpeg-dev libpng-dev libwebp-dev libxpm-dev libonig-dev \
     libzip-dev libsqlite3-dev libreadline-dev \
     libicu-dev libfreetype6-dev libbz2-dev \
     libtidy-dev libxslt1-dev libsodium-dev \
