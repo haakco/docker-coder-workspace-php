@@ -12,8 +12,9 @@ on:
     tags:
       - "v*"
   schedule:
-    # Offset from docker-coder-workspace (20:30 Sun) so the base rebuilds first.
-    - cron: '45 20 * * 0'
+    # Build order: docker-coder-workspace (20:30 Sun) → -playwright (21:15) → -php (21:30).
+    # -php now FROM -playwright (not the bare base) so it must rebuild after -playwright.
+    - cron: '30 21 * * 0'
   workflow_dispatch:
 permissions:
   contents: read
@@ -79,7 +80,7 @@ jobs:
             --pull \
             --push \
             --file ./docker_build/Dockerfile \
-            --build-arg BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace \
+            --build-arg BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright \
             --build-arg BASE_IMAGE_VERSION=latest \
             $TAG_ARGS \
             .

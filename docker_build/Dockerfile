@@ -2,8 +2,11 @@
 
 # =============================================================================
 # Coder workspace image with PHP build dependencies.
-# Extends ghcr.io/haakco/coder-workspace. Shared by projects that use mise's
-# PHP plugin to compile PHP from source: cb (CourierBoost), MacNan, tlm.
+# Extends ghcr.io/haakco/coder-workspace-playwright (which itself extends
+# coder-workspace). Inheriting from -playwright means PHP projects also get
+# Chromium/Firefox/WebKit baked in for E2E browser testing without each
+# template having to opt in. Shared by projects that use mise's PHP plugin
+# to compile PHP from source: cb (CourierBoost), MacNan, tlm.
 #
 # Each -dev header maps to one or more PHP extensions (core or PECL):
 #
@@ -33,7 +36,7 @@
 # Add more -dev packages here if PHP's ./configure starts failing for an
 # extension we haven't covered yet.
 # =============================================================================
-ARG BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace
+ARG BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright
 ARG BASE_IMAGE_VERSION=latest
 
 FROM ${BASE_IMAGE_NAME}:${BASE_IMAGE_VERSION}
