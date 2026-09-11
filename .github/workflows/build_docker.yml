@@ -11,11 +11,20 @@ on:
       - '.github/workflows/build_docker.yml'
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - 'docker_build/**'
+      - '.github/workflows/build_docker.yml'
   schedule:
     # Build order: docker-coder-workspace (20:30 Sun) → -playwright (21:15) → -php (21:30).
     # -php now FROM -playwright (not the bare base) so it must rebuild after -playwright.
     - cron: '30 21 * * 0'
   workflow_dispatch:
+    inputs:
+      check_only:
+        description: Build and smoke-test without pushing
+        type: boolean
+        default: false
 permissions:
   contents: read
   packages: write
@@ -68,7 +77,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build (check only, no push)
+        if: ${{ github.event_name == 'pull_request' || inputs.check_only == true }}
+        run: |
+          docker buildx build \
+            --pull \
+            --load \
+            --file ./docker_build/Dockerfile \
+            --build-arg BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright \
+            --build-arg BASE_IMAGE_VERSION=latest \
+            --cache-from type=registry,ref=ghcr.io/haakco/coder-workspace-php:buildcache \
+            --tag docker-coder-workspace-php:check \
+            .
+
+      - name: Smoke test
+        if: ${{ github.event_name == 'pull_request' || inputs.check_only == true }}
+        run: |
+          docker run --rm --entrypoint bash docker-coder-workspace-php:check -c '
+            set -e
+            node --version
+            corepack --version
+            pi --version
+            dpkg -s libgd3 >/dev/null
+            pkg-config --exists libxml-2.0
+            test -d /ms-playwright
+            test -f /etc/coder-skel/.pi/agent/settings.json
+            echo SMOKE_OK
+          '
+
       - name: Build and push Docker image
+        if: ${{ github.event_name != 'pull_request' && inputs.check_only != true }}
         run: |
           # Build tag arguments from metadata output
           TAG_ARGS=()
@@ -82,6 +120,8 @@ jobs:
             --file ./docker_build/Dockerfile \
             --build-arg BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright \
             --build-arg BASE_IMAGE_VERSION=latest \
+            --cache-from type=registry,ref=ghcr.io/haakco/coder-workspace-php:buildcache \
+            --cache-to type=registry,ref=ghcr.io/haakco/coder-workspace-php:buildcache,mode=max \
             "${TAG_ARGS[@]}" \
             .
         env:
