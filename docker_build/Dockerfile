@@ -51,6 +51,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtidy-dev libxslt1-dev libsodium-dev \
     libpq-dev libgmp-dev libldap2-dev \
     libmagickwand-dev librdkafka-dev libzstd-dev \
+    # Runtime GD library. PHP projects previously installed this on every
+    # workspace start; baking it in keeps workspace startup from running
+    # apt-get update each boot.
+    libgd3 \
     && rm -rf /var/lib/apt/lists/*
 
 USER coder
