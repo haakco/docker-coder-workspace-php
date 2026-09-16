@@ -73,9 +73,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # not discard the BuildKit cache for the others - a PHP compile is ~13 minutes.
 #
 # mise treats an installed tool as installed without rechecking how it was built,
-# so these two build settings must match what the projects expect. They are the
-# same ones the Coder startup script applies, which makes this image the owner of
-# how PHP is built; the startup script keeps only its checks.
+# so these build settings must match what the projects expect.
+#
+# The extension set comes from PHP_EXTRA_CONFIGURE_OPTIONS, which each project
+# supplies in its own mise.toml: a workspace build reads that file, this image
+# build has no project context and cannot. Without it the baked PHP has neither
+# ldap nor xsl, and cb's own verify hook stops the workspace bootstrap with "PHP
+# is missing compile-time extensions: ldap xsl" - the whole reason this list is
+# here. The union across the PHP projects is ldap, pgsql, sodium, xsl and zip
+# (cb needs ldap/sodium/xsl/zip; tlm adds pgsql), and it is exactly what the -dev
+# packages above provide, which is why that list is already exhaustive.
+#
+# A project needing different flags is caught rather than silently wrong: mise
+# will not recompile a baked tool, and each PHP project's mise enter hook verifies
+# the extension set on every workspace start.
+#
+#   PHP_EXTRA_CONFIGURE_OPTIONS  the extension set above
 #   --with-sodium        sodium extension, set through the plugin's configure hook
 #   HAAKCO_PIE_BEST_EFFORT  PIE verification is unreliable here and no project asks
 #                           for PIE extensions, so a flaky check must not fail the
@@ -99,6 +112,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # a new Dockerfile instruction and the build fails with "unknown instruction".
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
+ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
 RUN set -eu \
     && export MISE_DATA_DIR=/opt/mise \
     && mkdir -p "$MISE_DATA_DIR/plugins" /root/.config/mise \
@@ -117,14 +131,25 @@ RUN set -eu \
        fi \
     && chown -R 1000:1000 /opt/mise
 
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.3.31
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.5
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.7
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.9
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.3.31
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.5.5
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.5.7
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.5.9
 
+# Prove the compile-time extensions the projects verify are actually present. mise
+# reports a tool as installed without rechecking how it was built, so a missing
+# flag here would otherwise only surface as a failed workspace start.
 RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && chown -R 1000:1000 /opt/mise \
-    && MISE_DATA_DIR=/opt/mise mise ls php
+    && MISE_DATA_DIR=/opt/mise mise ls php \
+    && for version in 8.3.31 8.5.5 8.5.7 8.5.9; do \
+         for ext in ldap xsl sodium zip; do \
+           MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
+             | grep -qix "$ext" \
+             || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
+         done; \
+       done \
+    && echo "all four PHP builds carry ldap, xsl, sodium and zip"
 
 USER coder
 WORKDIR /home/coder
