@@ -75,20 +75,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # mise treats an installed tool as installed without rechecking how it was built,
 # so these build settings must match what the projects expect.
 #
-# The extension set comes from PHP_EXTRA_CONFIGURE_OPTIONS, which each project
-# supplies in its own mise.toml: a workspace build reads that file, this image
-# build has no project context and cannot. Without it the baked PHP has neither
-# ldap nor xsl, and cb's own verify hook stops the workspace bootstrap with "PHP
-# is missing compile-time extensions: ldap xsl" - the whole reason this list is
-# here. The union across the PHP projects is ldap, pgsql, sodium, xsl and zip
-# (cb needs ldap/sodium/xsl/zip; tlm adds pgsql), and it is exactly what the -dev
-# packages above provide, which is why that list is already exhaustive.
+# The extension set goes through the plugin's own extra_configure_options option,
+# not through the environment. The plugin's mise_env hook does
+#   set_env(env_vars, "PHP_EXTRA_CONFIGURE_OPTIONS", options.get(ctx, "extra_configure_options"))
+# whenever that option is set, so a project's own PHP_EXTRA_CONFIGURE_OPTIONS - and
+# anything exported here - is overwritten by it. An earlier revision exported the
+# full set and set the option to just --with-sodium, so the option won and every
+# baked PHP was missing ldap and xsl; the build's own assertion caught it.
+#
+# The options are those the projects supply in their own mise.toml, which a
+# workspace build reads and this image build cannot: the union across the PHP
+# projects is ldap, pgsql, sodium, xsl and zip (cb needs ldap/sodium/xsl/zip, tlm
+# adds pgsql), and it is exactly what the -dev packages above provide.
 #
 # A project needing different flags is caught rather than silently wrong: mise
 # will not recompile a baked tool, and each PHP project's mise enter hook verifies
 # the extension set on every workspace start.
 #
-#   PHP_EXTRA_CONFIGURE_OPTIONS  the extension set above
+#   PHP_EXTRA_CONFIGURE_OPTIONS  the extension set above, set through the plugin's
+#                           extra_configure_options option
 #   --with-sodium        sodium extension, set through the plugin's configure hook
 #   HAAKCO_PIE_BEST_EFFORT  PIE verification is unreliable here and no project asks
 #                           for PIE extensions, so a flaky check must not fail the
@@ -123,7 +128,7 @@ RUN set -eu \
     && mise plugins ls --urls | grep -q 'verzly/mise-php' \
     && touch /root/.config/mise/config.toml \
     && mise config set -f /root/.config/mise/config.toml \
-         env._.php.extra_configure_options --type string -- --with-sodium \
+         env._.php.extra_configure_options --type string -- "${PHP_EXTRA_CONFIGURE_OPTIONS}" \
     && post_install="$MISE_DATA_DIR/plugins/php/hooks/post_install.lua" \
     && [ -f "$post_install" ] \
     && if ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
@@ -131,10 +136,10 @@ RUN set -eu \
        fi \
     && chown -R 1000:1000 /opt/mise
 
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.3.31
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.5.5
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.5.7
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_EXTRA_CONFIGURE_OPTIONS="${PHP_EXTRA_CONFIGURE_OPTIONS}" mise install php@8.5.9
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.3.31
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.5
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.7
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.9
 
 # Prove the compile-time extensions the projects verify are actually present. mise
 # reports a tool as installed without rechecking how it was built, so a missing
