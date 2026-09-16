@@ -57,8 +57,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgd3 \
     && rm -rf /var/lib/apt/lists/*
 
-USER root
-
 # -----------------------------------------------------------------------------
 # PHP, compiled once here instead of in every workspace.
 #
@@ -82,30 +80,25 @@ USER root
 #   HAAKCO_PIE_BEST_EFFORT  PIE verification is unreliable here and no project asks
 #                           for PIE extensions, so a flaky check must not fail the
 #                           install and trigger a rebuild on every workspace start.
+#
+# `mise config set -f` needs its file to exist. In a workspace it does, because the
+# dotfiles config is already symlinked there before the startup script runs;
+# nothing has created it at this point in the build, so it is touched first.
+#
+# The PIE patch is written with printf rather than a heredoc on purpose: a heredoc
+# inside a RUN ends the instruction, so anything after its terminator is parsed as
+# a new Dockerfile instruction and the build fails with "unknown instruction".
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 RUN set -eu \
     && mkdir -p /opt/mise/plugins /root/.config/mise \
     && mise plugin install --force php "${MISE_PHP_PLUGIN}" \
-    # `mise config set -f` requires the file to exist. In a workspace it does,
-    # because the dotfiles config is already symlinked there by the time the
-    # startup script runs; during this build nothing has created it yet.
     && touch /root/.config/mise/config.toml \
     && mise config set -f /root/.config/mise/config.toml \
          env._.php.extra_configure_options --type string -- --with-sodium \
     && post_install=/opt/mise/plugins/php/hooks/post_install.lua \
     && if [ -f "$post_install" ] && ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
-         cat >> "$post_install" <<'LUA'
-
--- HAAKCO_PIE_BEST_EFFORT: treat PIE setup as best-effort. PIE verification is
--- unreliable on this image and no project requests PIE extensions, so a flaky
--- check must not fail the PHP install and trigger a rebuild on every start.
-local haakco_install_pie = php_packages.install_pie
-php_packages.install_pie = function(sdkPath, version)
-  haakco_install_pie(sdkPath, version)
-  return true
-end
-LUA
+         printf '\n-- HAAKCO_PIE_BEST_EFFORT: PIE setup is best-effort. Verification is\n-- unreliable on this image and no project requests PIE extensions, so a flaky\n-- check must not fail the install and trigger a rebuild on every start.\nlocal haakco_install_pie = php_packages.install_pie\nphp_packages.install_pie = function(sdkPath, version)\n  haakco_install_pie(sdkPath, version)\n  return true\nend\n' >> "$post_install"; \
        fi \
     && chown -R 1000:1000 /opt/mise
 
