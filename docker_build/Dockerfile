@@ -57,6 +57,67 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgd3 \
     && rm -rf /var/lib/apt/lists/*
 
+USER root
+
+# -----------------------------------------------------------------------------
+# PHP, compiled once here instead of in every workspace.
+#
+# Measured 2026-09-16 on a cold workspace: compiling PHP from source takes 804s -
+# about half of a 1648s start - and every PHP workspace paid it again, because the
+# toolchain lives on an ephemeral volume. The base image now bakes the shared
+# toolchain at /opt/mise, outside the /home/coder PVC mount that would otherwise
+# hide anything under the home directory; this image adds PHP to it, so one build
+# serves every workspace of every PHP project.
+#
+# The versions are the pins the estate's PHP projects actually use, listed once: a
+# bump is now a one-line change plus a rebuild, rather than a fresh source compile
+# on every workspace start. Each version is its own layer so that bumping one does
+# not discard the BuildKit cache for the others - a PHP compile is ~13 minutes.
+#
+# mise treats an installed tool as installed without rechecking how it was built,
+# so these two build settings must match what the projects expect. They are the
+# same ones the Coder startup script applies, which makes this image the owner of
+# how PHP is built; the startup script keeps only its checks.
+#   --with-sodium        sodium extension, set through the plugin's configure hook
+#   HAAKCO_PIE_BEST_EFFORT  PIE verification is unreliable here and no project asks
+#                           for PIE extensions, so a flaky check must not fail the
+#                           install and trigger a rebuild on every workspace start.
+# -----------------------------------------------------------------------------
+ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
+RUN set -eu \
+    && mkdir -p /opt/mise/plugins /root/.config/mise \
+    && mise plugin install --force php "${MISE_PHP_PLUGIN}" \
+    # `mise config set -f` requires the file to exist. In a workspace it does,
+    # because the dotfiles config is already symlinked there by the time the
+    # startup script runs; during this build nothing has created it yet.
+    && touch /root/.config/mise/config.toml \
+    && mise config set -f /root/.config/mise/config.toml \
+         env._.php.extra_configure_options --type string -- --with-sodium \
+    && post_install=/opt/mise/plugins/php/hooks/post_install.lua \
+    && if [ -f "$post_install" ] && ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
+         cat >> "$post_install" <<'LUA'
+
+-- HAAKCO_PIE_BEST_EFFORT: treat PIE setup as best-effort. PIE verification is
+-- unreliable on this image and no project requests PIE extensions, so a flaky
+-- check must not fail the PHP install and trigger a rebuild on every start.
+local haakco_install_pie = php_packages.install_pie
+php_packages.install_pie = function(sdkPath, version)
+  haakco_install_pie(sdkPath, version)
+  return true
+end
+LUA
+       fi \
+    && chown -R 1000:1000 /opt/mise
+
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.3.31
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.5
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.7
+RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.9
+
+RUN MISE_DATA_DIR=/opt/mise mise reshim \
+    && chown -R 1000:1000 /opt/mise \
+    && MISE_DATA_DIR=/opt/mise mise ls php
+
 USER coder
 WORKDIR /home/coder
 ENTRYPOINT ["/usr/local/bin/workspace-entrypoint.sh"]
