@@ -81,6 +81,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #                           for PIE extensions, so a flaky check must not fail the
 #                           install and trigger a rebuild on every workspace start.
 #
+# Every mise call here sets MISE_DATA_DIR. Without it mise uses its default data
+# directory, and the plugin lands somewhere the later layers never look: the first
+# version of this layer installed the plugin into ~/.local/share/mise, so
+# /opt/mise/plugins stayed empty, the next RUN silently auto-installed mise's
+# built-in jdx/vfox-php backend instead, and the build failed on a missing libgd
+# because that backend does not install build dependencies. The PIE patch was
+# skipped by its own [ -f ] guard for the same reason, which is why the guard is
+# now an assertion.
+#
 # `mise config set -f` needs its file to exist. In a workspace it does, because the
 # dotfiles config is already symlinked there before the startup script runs;
 # nothing has created it at this point in the build, so it is touched first.
@@ -91,13 +100,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 RUN set -eu \
-    && mkdir -p /opt/mise/plugins /root/.config/mise \
+    && export MISE_DATA_DIR=/opt/mise \
+    && mkdir -p "$MISE_DATA_DIR/plugins" /root/.config/mise \
     && mise plugin install --force php "${MISE_PHP_PLUGIN}" \
+    # Fail loudly if the plugin is not the one this build depends on. mise happily
+    # falls back to its built-in backend, which compiles PHP but ships no build
+    # dependencies, and the only symptom is an unrelated configure error later.
+    && mise plugins ls --urls | grep -q 'verzly/mise-php' \
     && touch /root/.config/mise/config.toml \
     && mise config set -f /root/.config/mise/config.toml \
          env._.php.extra_configure_options --type string -- --with-sodium \
-    && post_install=/opt/mise/plugins/php/hooks/post_install.lua \
-    && if [ -f "$post_install" ] && ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
+    && post_install="$MISE_DATA_DIR/plugins/php/hooks/post_install.lua" \
+    && [ -f "$post_install" ] \
+    && if ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
          printf '\n-- HAAKCO_PIE_BEST_EFFORT: PIE setup is best-effort. Verification is\n-- unreliable on this image and no project requests PIE extensions, so a flaky\n-- check must not fail the install and trigger a rebuild on every start.\nlocal haakco_install_pie = php_packages.install_pie\nphp_packages.install_pie = function(sdkPath, version)\n  haakco_install_pie(sdkPath, version)\n  return true\nend\n' >> "$post_install"; \
        fi \
     && chown -R 1000:1000 /opt/mise
