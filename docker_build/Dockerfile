@@ -134,13 +134,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
-# Named MISE_PHP_* rather than PHP_* deliberately. An ARG is visible to the shell of every
-# RUN in the stage, so an ARG called PHP_PECL_EXTENSIONS puts that variable in the
-# environment of every PHP install below - including 8.5, where the plugin refuses PECL
-# outright. That is what kept failing the build after the list had supposedly been
-# removed. The variable the plugin actually reads is set explicitly, on the one install
-# that should have it.
-ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 RUN --mount=type=secret,id=github_token \
     set -eu \
     && export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
@@ -169,43 +162,35 @@ RUN --mount=type=secret,id=github_token \
 
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
-       PHP_PECL_EXTENSIONS="${MISE_PHP_PECL_EXTENSIONS}" \
-       mise install php@8.3.31
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.3.31
 
 # Only the two versions anything actually pins are baked: 8.5.9, which cb and every other
 # PHP project use, and 8.3.31 for awthy. 8.5.5 and 8.5.7 were here because they appeared in
 # the projects' pins when this layer was written - nothing uses them, the plugin cannot
-# supply their PECL extensions, and they cost minutes of build time each. A project that
-# moves onto a different version needs one word added here, and for 8.5 or newer one word
-# in PHP_EXTENSION_VERSIONS below as well.
+# supply their extensions, and they cost minutes of build time each. A project that moves
+# onto a different version needs one word added at PHP_EXTENSION_VERSIONS below.
+#
+# Neither version uses the plugin's PECL path. It cannot build PECL extensions on 8.5 at
+# all, and it installs the http extension under its PECL package name, so the extension
+# never loads as http - which is why the verification below caught http missing. Every
+# extension is built from source, for both versions, in the step below.
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.9
 
-# --- The PECL extensions for PHP 8.5, built from source -----------------------
-#
-# cb pins php 8.5.9, its composer install requires ext-imagick and ext-opentelemetry, and
-# its mise enter hook re-verifies the whole set on every workspace start - so these have to
-# exist in the image rather than being compiled per workspace, which is what the baked
-# toolchain exists to avoid.
-#
-# This is the sequence the plugin uses for older PHP, and the one cb's own
-# .mise/install-php-extensions.sh uses at runtime: fetch the PECL tarball, phpize,
-# configure against this PHP, make install. Two details are easy to get wrong and both
-# cost a full PHP compile to discover: the PECL *package* name can differ from the module
-# name (the http extension's package is pecl_http - asking for http returns 404), and
-# raphf has to be built before pecl_http, which is why the list is ordered.
-ARG PHP_EXTENSION_VERSIONS="8.5.9"
-# Re-declared with the same default so a build that passes no build-arg cannot
-# silently produce an image with no PECL extensions on 8.5 - the verification step
-# would catch it, but only after another full PHP compile.
+ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.9"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 RUN set -eu \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
          prefix="/opt/mise/installs/php/${version}"; \
+         extdir="$("${prefix}/bin/php-config" --extension-dir)"; \
+         scandir="${prefix}/conf.d"; \
+         mkdir -p "${scandir}" "${extdir}"; \
+         index=0; \
          for ext in ${MISE_PHP_PECL_EXTENSIONS}; do \
+           index=$((index + 1)); \
            work="$(mktemp -d)"; \
+           before="$(mktemp)"; after="$(mktemp)"; \
            echo "building ${ext} for php@${version}"; \
            curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
              "https://pecl.php.net/get/${ext}" -o "${work}/${ext}.tgz" \
@@ -213,13 +198,20 @@ RUN set -eu \
            tar xzf "${work}/${ext}.tgz" -C "${work}" --strip-components=1; \
            extra_args=""; \
            if [ "${ext}" = "xdebug" ]; then extra_args="--enable-xdebug"; fi; \
-           cd "${work}" \
+           ls "${extdir}" 2>/dev/null | sort > "${before}" || true; \
+           ( cd "${work}" \
              && "${prefix}/bin/phpize" \
              && ./configure ${extra_args} --with-php-config="${prefix}/bin/php-config" \
              && make -j"$(nproc)" \
-             && make install \
-             && make clean; \
-           cd /; rm -rf "${work}"; \
+             && make install ); \
+           ls "${extdir}" 2>/dev/null | sort > "${after}" || true; \
+           so="$(comm -13 "${before}" "${after}" | grep '\.so$' | head -1)"; \
+           rm -rf "${work}" "${before}" "${after}"; \
+           [ -n "${so}" ] \
+             || { echo "building ${ext} for php@${version} produced no extension"; exit 1; }; \
+           printf 'extension=%s\n' "${so}" \
+             > "${scandir}/$(printf '%02d' "${index}")-${so%.so}.ini"; \
+           echo "  enabled ${so} for php@${version}"; \
          done; \
        done
 
