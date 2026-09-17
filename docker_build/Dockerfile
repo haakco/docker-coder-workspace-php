@@ -127,7 +127,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
 ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry"
-RUN set -eu \
+RUN --mount=type=secret,id=github_token \
+    set -eu \
+    && export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && export MISE_DATA_DIR=/opt/mise \
     && mkdir -p "$MISE_DATA_DIR/plugins" /root/.config/mise \
     && mise plugin install --force php "${MISE_PHP_PLUGIN}" \
@@ -147,10 +149,18 @@ RUN set -eu \
        fi \
     && chown -R 1000:1000 /opt/mise
 
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.3.31
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.5
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.7
-RUN MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.9
+RUN --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.3.31
+RUN --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.5
+RUN --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.7
+RUN --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.9
 
 # Prove the compile-time extensions the projects verify are actually present. mise
 # reports a tool as installed without rechecking how it was built, so a missing
