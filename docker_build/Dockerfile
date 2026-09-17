@@ -234,4 +234,22 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
 
 USER coder
 WORKDIR /home/coder
+
+# Smoke assertions, moved out of CI and into the build so they run on the shared BuildKit
+# for both the PR path and the publish path: an image can no longer publish without them.
+# Verbatim from the retired `Smoke test` workflow step, including its `set -e` - without
+# that, the trailing echo would mask any earlier failure. Runs as `coder`, the user
+# `docker run` used, so PATH and tool behaviour match what was validated there.
+RUN <<'EOF'
+set -e
+node --version
+corepack --version
+pi --version
+dpkg -s libgd3 >/dev/null
+pkg-config --exists libxml-2.0
+test -d /ms-playwright
+test -f /etc/coder-skel/.pi/agent/settings.json
+echo SMOKE_OK
+EOF
+
 ENTRYPOINT ["/usr/local/bin/workspace-entrypoint.sh"]

@@ -31,7 +31,12 @@ permissions:
 jobs:
   build_and_push:
     name: Build and push workspace-php image
-    runs-on: [self-hosted, haakco]
+    runs-on: haakco-build
+    container:
+      image: ghcr.io/haakco/actions-runner:1
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     concurrency:
       group: "coder-workspace-php:${{ github.ref_name }}"
       cancel-in-progress: true
@@ -94,7 +99,7 @@ jobs:
       - name: Register the cluster BuildKit builder
         run: |
           set -euo pipefail
-          /home/runner/buildx-cluster/setup-buildx-cluster.sh
+          setup-buildx.sh
 
       - name: Build (check only, no push)
         if: ${{ github.event_name == 'pull_request' || inputs.check_only == true }}
@@ -102,28 +107,12 @@ jobs:
           docker buildx build \
             --secret id=github_token,env=HAAKCO_GITHUB_TOKEN \
             --pull \
-            --load \
+            --output type=cacheonly \
             --file ./docker_build/Dockerfile \
             --build-arg BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright \
             --build-arg BASE_IMAGE_VERSION=latest \
             --cache-from type=registry,ref=ghcr.io/haakco/coder-workspace-php:buildcache \
-            --tag docker-coder-workspace-php:check \
             .
-
-      - name: Smoke test
-        if: ${{ github.event_name == 'pull_request' || inputs.check_only == true }}
-        run: |
-          docker run --rm --entrypoint bash docker-coder-workspace-php:check -c '
-            set -e
-            node --version
-            corepack --version
-            pi --version
-            dpkg -s libgd3 >/dev/null
-            pkg-config --exists libxml-2.0
-            test -d /ms-playwright
-            test -f /etc/coder-skel/.pi/agent/settings.json
-            echo SMOKE_OK
-          '
 
       - name: Build and push Docker image
         if: ${{ github.event_name != 'pull_request' && inputs.check_only != true }}
