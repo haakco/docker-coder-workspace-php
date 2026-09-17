@@ -134,7 +134,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
-ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
+# Named MISE_PHP_* rather than PHP_* deliberately. An ARG is visible to the shell of every
+# RUN in the stage, so an ARG called PHP_PECL_EXTENSIONS puts that variable in the
+# environment of every PHP install below - including 8.5, where the plugin refuses PECL
+# outright. That is what kept failing the build after the list had supposedly been
+# removed. The variable the plugin actually reads is set explicitly, on the one install
+# that should have it.
+ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 RUN --mount=type=secret,id=github_token \
     set -eu \
     && export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
@@ -164,20 +170,15 @@ RUN --mount=type=secret,id=github_token \
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
-       PHP_PECL_EXTENSIONS="${PHP_PECL_EXTENSIONS}" \
+       PHP_PECL_EXTENSIONS="${MISE_PHP_PECL_EXTENSIONS}" \
        mise install php@8.3.31
 
-# php@8.5.5 and php@8.5.7 install without the PECL extensions on purpose: the plugin
-# cannot build PECL extensions on 8.5 at all, and no checked-out project pins either
-# version. A project that moves onto one should be added to PHP_EXTENSION_VERSIONS below,
-# which costs roughly a minute of build time per extension per version. Both still carry
-# the core extensions, which come from the configure options rather than PECL.
-RUN --mount=type=secret,id=github_token \
-    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.5
-RUN --mount=type=secret,id=github_token \
-    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.7
+# Only the two versions anything actually pins are baked: 8.5.9, which cb and every other
+# PHP project use, and 8.3.31 for awthy. 8.5.5 and 8.5.7 were here because they appeared in
+# the projects' pins when this layer was written - nothing uses them, the plugin cannot
+# supply their PECL extensions, and they cost minutes of build time each. A project that
+# moves onto a different version needs one word added here, and for 8.5 or newer one word
+# in PHP_EXTENSION_VERSIONS below as well.
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.9
@@ -199,11 +200,11 @@ ARG PHP_EXTENSION_VERSIONS="8.5.9"
 # Re-declared with the same default so a build that passes no build-arg cannot
 # silently produce an image with no PECL extensions on 8.5 - the verification step
 # would catch it, but only after another full PHP compile.
-ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
+ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 RUN set -eu \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
          prefix="/opt/mise/installs/php/${version}"; \
-         for ext in ${PHP_PECL_EXTENSIONS}; do \
+         for ext in ${MISE_PHP_PECL_EXTENSIONS}; do \
            work="$(mktemp -d)"; \
            echo "building ${ext} for php@${version}"; \
            curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
@@ -230,21 +231,14 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && MISE_DATA_DIR=/opt/mise mise ls php \
     && core_extensions="ldap xsl sodium zip" \
     && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
-    && for version in 8.3.31 8.5.5 8.5.7 8.5.9; do \
-         for ext in ${core_extensions}; do \
-           MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
-             | grep -qix "$ext" \
-             || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
-         done; \
-       done \
     && for version in 8.3.31 8.5.9; do \
-         for ext in ${pecl_extensions}; do \
+         for ext in ${core_extensions} ${pecl_extensions}; do \
            MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
              | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
        done \
-    && echo "core extensions on all four PHP builds, PECL extensions on 8.3.31 and 8.5.9"
+    && echo "php@8.3.31 and php@8.5.9 carry the core and PECL extension sets"
 
 USER coder
 WORKDIR /home/coder
