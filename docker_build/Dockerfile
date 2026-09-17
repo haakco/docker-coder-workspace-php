@@ -100,6 +100,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # is igbinary, msgpack, redis, imagick, rdkafka, raphf, http, pcov, xdebug and
 # opentelemetry, and the -dev packages above cover all of them.
 #
+# pecl_http, not http: the plugin builds the download URL from the name it is given as
+# https://pecl.php.net/get/<name>, and the PECL package is called pecl_http. Asking for
+# 'http' returns a 404 with "package 'http' does not exist", which the plugin reports only
+# as "tar: Error is not recoverable" after a full source compile. The installed extension
+# is still http.so - the name comes from the package itself - so the workspace sees the
+# same extension either way. cb's own .mise/install-php-extensions.sh maps the two the
+# same way, module http <- PECL package pecl_http.
+#
 #   PHP_EXTRA_CONFIGURE_OPTIONS  the extension set above, set through the plugin's
 #                           extra_configure_options option
 #   --with-sodium        sodium extension, set through the plugin's configure hook
@@ -126,7 +134,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
-ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry"
+ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 RUN --mount=type=secret,id=github_token \
     set -eu \
     && export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
