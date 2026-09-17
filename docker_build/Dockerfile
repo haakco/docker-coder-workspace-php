@@ -151,16 +151,16 @@ RUN --mount=type=secret,id=github_token \
 
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.3.31
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.3.31
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.5
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.5
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.7
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.7
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 mise install php@8.5.9
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.9
 
 # Prove the compile-time extensions the projects verify are actually present. mise
 # reports a tool as installed without rechecking how it was built, so a missing
