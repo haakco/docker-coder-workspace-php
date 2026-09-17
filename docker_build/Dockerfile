@@ -92,6 +92,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # will not recompile a baked tool, and each PHP project's mise enter hook verifies
 # the extension set on every workspace start.
 #
+# PECL extensions are baked for the same reason. They are compile-time too - the
+# plugin installs them through its own pecl_extensions option during the PHP
+# build - and without them cb's composer install fails with 'it is missing from
+# your system' for ext-imagick and ext-opentelemetry, leaving vendor/ absent and
+# the workspace reporting a start error. The union of the PHP projects' PECL lists
+# is igbinary, msgpack, redis, imagick, rdkafka, raphf, http, pcov, xdebug and
+# opentelemetry, and the -dev packages above cover all of them.
+#
 #   PHP_EXTRA_CONFIGURE_OPTIONS  the extension set above, set through the plugin's
 #                           extra_configure_options option
 #   --with-sodium        sodium extension, set through the plugin's configure hook
@@ -118,6 +126,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -----------------------------------------------------------------------------
 ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
 ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
+ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry"
 RUN set -eu \
     && export MISE_DATA_DIR=/opt/mise \
     && mkdir -p "$MISE_DATA_DIR/plugins" /root/.config/mise \
@@ -129,6 +138,8 @@ RUN set -eu \
     && touch /root/.config/mise/config.toml \
     && mise config set -f /root/.config/mise/config.toml \
          env._.php.extra_configure_options --type string -- "${PHP_EXTRA_CONFIGURE_OPTIONS}" \
+    && mise config set -f /root/.config/mise/config.toml \
+         env._.php.pecl_extensions --type string -- "${PHP_PECL_EXTENSIONS}" \
     && post_install="$MISE_DATA_DIR/plugins/php/hooks/post_install.lua" \
     && [ -f "$post_install" ] \
     && if ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
@@ -148,13 +159,14 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && chown -R 1000:1000 /opt/mise \
     && MISE_DATA_DIR=/opt/mise mise ls php \
     && for version in 8.3.31 8.5.5 8.5.7 8.5.9; do \
-         for ext in ldap xsl sodium zip; do \
+         for ext in ldap xsl sodium zip \
+                    igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry; do \
            MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
              | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
        done \
-    && echo "all four PHP builds carry ldap, xsl, sodium and zip"
+    && echo "all four PHP builds carry the core and PECL extension sets"
 
 USER coder
 WORKDIR /home/coder
