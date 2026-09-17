@@ -148,8 +148,12 @@ RUN --mount=type=secret,id=github_token \
     && touch /root/.config/mise/config.toml \
     && mise config set -f /root/.config/mise/config.toml \
          env._.php.extra_configure_options --type string -- "${PHP_EXTRA_CONFIGURE_OPTIONS}" \
-    && mise config set -f /root/.config/mise/config.toml \
-         env._.php.pecl_extensions --type string -- "${PHP_PECL_EXTENSIONS}" \
+    # pecl_extensions is deliberately NOT set here. As a mise config option it applies to
+    # every version, and the plugin refuses its PECL path on PHP 8.5 or newer with "PECL is
+    # not available for PHP 8.5.5 in this plugin", because 8.5 no longer ships the pecl
+    # binary. The list is passed as an environment variable to the one install that can use
+    # it instead - see the php@8.3.31 layer - and 8.5 gets the same extensions built from
+    # source in the layer after it.
     && post_install="$MISE_DATA_DIR/plugins/php/hooks/post_install.lua" \
     && [ -f "$post_install" ] \
     && if ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
@@ -159,7 +163,15 @@ RUN --mount=type=secret,id=github_token \
 
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.3.31
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       PHP_PECL_EXTENSIONS="${PHP_PECL_EXTENSIONS}" \
+       mise install php@8.3.31
+
+# php@8.5.5 and php@8.5.7 install without the PECL extensions on purpose: the plugin
+# cannot build PECL extensions on 8.5 at all, and no checked-out project pins either
+# version. A project that moves onto one should be added to PHP_EXTENSION_VERSIONS below,
+# which costs roughly a minute of build time per extension per version. Both still carry
+# the core extensions, which come from the configure options rather than PECL.
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.5
@@ -170,21 +182,69 @@ RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.9
 
+# --- The PECL extensions for PHP 8.5, built from source -----------------------
+#
+# cb pins php 8.5.9, its composer install requires ext-imagick and ext-opentelemetry, and
+# its mise enter hook re-verifies the whole set on every workspace start - so these have to
+# exist in the image rather than being compiled per workspace, which is what the baked
+# toolchain exists to avoid.
+#
+# This is the sequence the plugin uses for older PHP, and the one cb's own
+# .mise/install-php-extensions.sh uses at runtime: fetch the PECL tarball, phpize,
+# configure against this PHP, make install. Two details are easy to get wrong and both
+# cost a full PHP compile to discover: the PECL *package* name can differ from the module
+# name (the http extension's package is pecl_http - asking for http returns 404), and
+# raphf has to be built before pecl_http, which is why the list is ordered.
+ARG PHP_EXTENSION_VERSIONS="8.5.9"
+# Re-declared with the same default so a build that passes no build-arg cannot
+# silently produce an image with no PECL extensions on 8.5 - the verification step
+# would catch it, but only after another full PHP compile.
+ARG PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
+RUN set -eu \
+    && for version in ${PHP_EXTENSION_VERSIONS}; do \
+         prefix="/opt/mise/installs/php/${version}"; \
+         for ext in ${PHP_PECL_EXTENSIONS}; do \
+           work="$(mktemp -d)"; \
+           echo "building ${ext} for php@${version}"; \
+           curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+             "https://pecl.php.net/get/${ext}" -o "${work}/${ext}.tgz" \
+             || { echo "could not download ${ext} for php@${version}"; exit 1; }; \
+           tar xzf "${work}/${ext}.tgz" -C "${work}" --strip-components=1; \
+           extra_args=""; \
+           if [ "${ext}" = "xdebug" ]; then extra_args="--enable-xdebug"; fi; \
+           cd "${work}" \
+             && "${prefix}/bin/phpize" \
+             && ./configure ${extra_args} --with-php-config="${prefix}/bin/php-config" \
+             && make -j"$(nproc)" \
+             && make install \
+             && make clean; \
+           cd /; rm -rf "${work}"; \
+         done; \
+       done
+
 # Prove the compile-time extensions the projects verify are actually present. mise
 # reports a tool as installed without rechecking how it was built, so a missing
 # flag here would otherwise only surface as a failed workspace start.
 RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && chown -R 1000:1000 /opt/mise \
     && MISE_DATA_DIR=/opt/mise mise ls php \
+    && core_extensions="ldap xsl sodium zip" \
+    && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
     && for version in 8.3.31 8.5.5 8.5.7 8.5.9; do \
-         for ext in ldap xsl sodium zip \
-                    igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry; do \
+         for ext in ${core_extensions}; do \
            MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
              | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
        done \
-    && echo "all four PHP builds carry the core and PECL extension sets"
+    && for version in 8.3.31 8.5.9; do \
+         for ext in ${pecl_extensions}; do \
+           MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
+             | grep -qix "$ext" \
+             || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
+         done; \
+       done \
+    && echo "core extensions on all four PHP builds, PECL extensions on 8.3.31 and 8.5.9"
 
 USER coder
 WORKDIR /home/coder
