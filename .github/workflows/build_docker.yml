@@ -97,6 +97,7 @@ jobs:
       # That is why the build steps below name no --builder and why adding a second
       # BuildKit replica needs no change here.
       - name: Register the cluster BuildKit builder
+        shell: bash
         run: |
           set -euo pipefail
           setup-buildx.sh
@@ -116,6 +117,7 @@ jobs:
 
       - name: Build and push Docker image
         if: ${{ github.event_name != 'pull_request' && inputs.check_only != true }}
+        shell: bash
         run: |
           # Build tag arguments from metadata output
           TAG_ARGS=()
