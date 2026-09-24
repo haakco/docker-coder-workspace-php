@@ -164,11 +164,9 @@ RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.3.31
 
-# Only the two versions anything actually pins are baked: 8.5.9, which cb and every other
-# PHP project use, and 8.3.31 for awthy. 8.5.5 and 8.5.7 were here because they appeared in
-# the projects' pins when this layer was written - nothing uses them, the plugin cannot
-# supply their extensions, and they cost minutes of build time each. A project that moves
-# onto a different version needs one word added at PHP_EXTENSION_VERSIONS below.
+# Bake the exact versions currently pinned by PHP workspaces: 8.3.31 for awthy,
+# 8.5.9 for Hosting and other projects, and 8.5.10 for cb. A project that moves
+# onto a different version needs a matching install and extension check below.
 #
 # Neither version uses the plugin's PECL path. It cannot build PECL extensions on 8.5 at
 # all, and it installs the http extension under its PECL package name, so the extension
@@ -178,7 +176,11 @@ RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.9
 
-ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.9"
+RUN --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.10
+
+ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.9 8.5.10"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 RUN set -eu \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
@@ -223,14 +225,14 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && MISE_DATA_DIR=/opt/mise mise ls php \
     && core_extensions="ldap xsl sodium zip" \
     && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
-    && for version in 8.3.31 8.5.9; do \
+    && for version in 8.3.31 8.5.9 8.5.10; do \
          for ext in ${core_extensions} ${pecl_extensions}; do \
            MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
              | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
        done \
-    && echo "php@8.3.31 and php@8.5.9 carry the core and PECL extension sets"
+    && echo "php@8.3.31, php@8.5.9 and php@8.5.10 carry the core and PECL extension sets"
 
 USER coder
 WORKDIR /home/coder
