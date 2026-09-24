@@ -22,7 +22,9 @@ PHP Coder workspaces include:
 - **MacNan** (Laravel)
 - **tlm** (TrackLab monorepo)
 
-Their Coder workspace templates in `prod-infra/htz/germ/tf-ha/080_coder/templates/<project>/main.tf` set `image = "ghcr.io/haakco/coder-workspace-php:latest"`.
+Their Coder workspace templates in `prod-infra/htz/germ/tf-ha/080_coder/templates/<project>/main.tf`
+select this image. A project with an exact PHP pin can use an immutable digest so
+its workspace always receives the build proven with that version.
 
 ## Adding a new PHP extension
 

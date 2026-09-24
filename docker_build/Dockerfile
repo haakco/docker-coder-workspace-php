@@ -168,7 +168,7 @@ RUN --mount=type=secret,id=github_token \
 # 8.5.9 for Hosting and other projects, and 8.5.10 for cb. A project that moves
 # onto a different version needs a matching install and extension check below.
 #
-# Neither version uses the plugin's PECL path. It cannot build PECL extensions on 8.5 at
+# These versions do not use the plugin's PECL path. It cannot build PECL extensions on 8.5 at
 # all, and it installs the http extension under its PECL package name, so the extension
 # never loads as http - which is why the verification below caught http missing. Every
 # extension is built from source, for both versions, in the step below.
