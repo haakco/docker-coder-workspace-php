@@ -41,7 +41,14 @@ ARG BASE_IMAGE_VERSION=latest
 
 FROM ${BASE_IMAGE_NAME}:${BASE_IMAGE_VERSION}
 
+ARG APT_PROXY=""
+ARG NPM_CONFIG_REGISTRY
 USER root
+RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng && \
+    if [ -n "$APT_PROXY" ]; then \
+      printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
+        "$APT_PROXY" "$APT_PROXY" > /etc/apt/apt.conf.d/00apt-cacher-ng; \
+    fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev libssl-dev libcurl4-openssl-dev \
@@ -277,6 +284,8 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
          fi; \
        done \
     && echo "php@${PHP_EXTENSION_VERSIONS} carry the core and PECL extension sets"
+
+RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng
 
 USER coder
 WORKDIR /home/coder
