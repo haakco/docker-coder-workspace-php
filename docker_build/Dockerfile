@@ -164,40 +164,47 @@ RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.3.31
 
-# Bake the exact versions currently pinned by PHP workspaces: 8.3.31 for awthy,
-# 8.5.9 for Hosting and other projects, and 8.5.10 for cb. A project that moves
-# onto a different version needs a matching install and extension check below.
+# Bake the versions PHP workspaces pin: 8.3.31 for the WordPress project (awthy),
+# 8.5.10 for every other PHP project. One 8.5 patch is deliberate - two of them were two
+# near-identical source builds to compile, verify and ship, and a project could only be
+# on whichever one the image happened to carry. A project that moves onto a different
+# version needs a matching install and extension check below.
 #
 # These versions do not use the plugin's PECL path. It cannot build PECL extensions on 8.5 at
 # all, and it installs the http extension under its PECL package name, so the extension
 # never loads as http - which is why the verification below caught http missing. Every
-# extension is built from source, for both versions, in the step below.
-RUN --mount=type=secret,id=github_token \
-    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.9
-
+# extension is built from source, for each version, in the step below.
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.10
 
-ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.9 8.5.10"
+ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.10"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
-RUN set -eu \
+
+# Build the extensions from source and record what each one produced.
+#
+# The downloads sit in a cache mount and are revalidated with `curl -z`, so a rebuilt layer
+# reuses a tarball the server says is unchanged rather than re-fetching every PECL release -
+# and never silently installs an older one, because a changed release is downloaded again.
+# The build tree stays a fresh mktemp so a rebuilt layer cannot pick up earlier objects.
+#
+# The ini files are deliberately NOT written here - see the layer after this one.
+RUN --mount=type=cache,target=/pecl-cache \
+    set -eu \
+    && : > /tmp/php-extensions.tsv \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
          prefix="/opt/mise/installs/php/${version}"; \
          extdir="$("${prefix}/bin/php-config" --extension-dir)"; \
-         scandir="${prefix}/conf.d"; \
-         mkdir -p "${scandir}" "${extdir}"; \
-         index=0; \
+         mkdir -p "${extdir}"; \
          for ext in ${MISE_PHP_PECL_EXTENSIONS}; do \
-           index=$((index + 1)); \
            work="$(mktemp -d)"; \
            before="$(mktemp)"; after="$(mktemp)"; \
            echo "building ${ext} for php@${version}"; \
-           curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
-             "https://pecl.php.net/get/${ext}" -o "${work}/${ext}.tgz" \
+           tarball="/pecl-cache/${ext}.tgz"; \
+           curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -z "${tarball}" \
+             "https://pecl.php.net/get/${ext}" -o "${tarball}" \
              || { echo "could not download ${ext} for php@${version}"; exit 1; }; \
-           tar xzf "${work}/${ext}.tgz" -C "${work}" --strip-components=1; \
+           tar xzf "${tarball}" -C "${work}" --strip-components=1; \
            extra_args=""; \
            if [ "${ext}" = "xdebug" ]; then extra_args="--enable-xdebug"; fi; \
            ls "${extdir}" 2>/dev/null | sort > "${before}" || true; \
@@ -211,15 +218,37 @@ RUN set -eu \
            rm -rf "${work}" "${before}" "${after}"; \
            [ -n "${so}" ] \
              || { echo "building ${ext} for php@${version} produced no extension"; exit 1; }; \
+           printf '%s\t%s\t%s\n' "${version}" "${ext}" "${so}" >> /tmp/php-extensions.tsv; \
+           echo "  built ${so} for php@${version}"; \
+         done; \
+       done
+
+# Write each extension's ini file from the build manifest.
+#
+# This is its own layer so that an ini change is seconds, not a recompile: the xdebug
+# load-key fix invalidated the build layer above and rebuilt thirty extensions because
+# the ini write lived inside that loop. The two-digit prefix is the build order, which is
+# what the existing files were named after.
+RUN set -eu \
+    && for version in ${PHP_EXTENSION_VERSIONS}; do \
+         prefix="/opt/mise/installs/php/${version}"; \
+         scandir="${prefix}/conf.d"; \
+         mkdir -p "${scandir}"; \
+         index=0; \
+         for ext in ${MISE_PHP_PECL_EXTENSIONS}; do \
+           index=$((index + 1)); \
+           so="$(awk -F'\t' -v v="${version}" -v e="${ext}" '$1 == v && $2 == e { print $3 }' /tmp/php-extensions.tsv)"; \
+           [ -n "${so}" ] \
+             || { echo "the build step recorded no extension for ${ext} on php@${version}"; exit 1; }; \
            ini_key="extension"; \
            # Xdebug only loads as a Zend extension. Written as `extension=` it prints
            # "Xdebug MUST be loaded as a Zend extension" on every php start and is
            # silently not loaded, so the project's own extension check cannot tell the
            # difference - the assertion below is what catches a regression.
            if [ "${ext}" = "xdebug" ]; then ini_key="zend_extension"; fi; \
-           printf '%s=%s\n' "${ini_key}" "${so}" \
+           printf '%s\n' "${ini_key}=${so}" \
              > "${scandir}/$(printf '%02d' "${index}")-${so%.so}.ini"; \
-           echo "  enabled ${so} for php@${version} ($ini_key)"; \
+           echo "  enabled ${so} for php@${version} (${ini_key})"; \
          done; \
        done
 
@@ -231,14 +260,14 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && MISE_DATA_DIR=/opt/mise mise ls php \
     && core_extensions="ldap xsl sodium zip" \
     && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
-    && for version in 8.3.31 8.5.9 8.5.10; do \
+    && for version in ${PHP_EXTENSION_VERSIONS}; do \
          for ext in ${core_extensions} ${pecl_extensions}; do \
            MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
              | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
        done \
-    && for version in 8.3.31 8.5.9 8.5.10; do \
+    && for version in ${PHP_EXTENSION_VERSIONS}; do \
          # `php -m` lists xdebug either way, so the extension check above passes even
          # when it is loaded as a normal extension. Fail the build instead of shipping a
          # warning on every php start.
@@ -247,7 +276,7 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
            exit 1; \
          fi; \
        done \
-    && echo "php@8.3.31, php@8.5.9 and php@8.5.10 carry the core and PECL extension sets"
+    && echo "php@${PHP_EXTENSION_VERSIONS} carry the core and PECL extension sets"
 
 USER coder
 WORKDIR /home/coder
