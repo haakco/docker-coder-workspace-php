@@ -211,9 +211,15 @@ RUN set -eu \
            rm -rf "${work}" "${before}" "${after}"; \
            [ -n "${so}" ] \
              || { echo "building ${ext} for php@${version} produced no extension"; exit 1; }; \
-           printf 'extension=%s\n' "${so}" \
+           ini_key="extension"; \
+           # Xdebug only loads as a Zend extension. Written as `extension=` it prints
+           # "Xdebug MUST be loaded as a Zend extension" on every php start and is
+           # silently not loaded, so the project's own extension check cannot tell the
+           # difference - the assertion below is what catches a regression.
+           if [ "${ext}" = "xdebug" ]; then ini_key="zend_extension"; fi; \
+           printf '%s=%s\n' "${ini_key}" "${so}" \
              > "${scandir}/$(printf '%02d' "${index}")-${so%.so}.ini"; \
-           echo "  enabled ${so} for php@${version}"; \
+           echo "  enabled ${so} for php@${version} ($ini_key)"; \
          done; \
        done
 
@@ -231,6 +237,15 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
              | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
+       done \
+    && for version in 8.3.31 8.5.9 8.5.10; do \
+         # `php -m` lists xdebug either way, so the extension check above passes even
+         # when it is loaded as a normal extension. Fail the build instead of shipping a
+         # warning on every php start.
+         if grep -rqs '^extension=xdebug' "/opt/mise/installs/php/${version}/conf.d/"; then \
+           echo "php@${version} loads xdebug as a normal extension; it needs zend_extension"; \
+           exit 1; \
+         fi; \
        done \
     && echo "php@8.3.31, php@8.5.9 and php@8.5.10 carry the core and PECL extension sets"
 
