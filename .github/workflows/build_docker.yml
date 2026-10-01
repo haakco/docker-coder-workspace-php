@@ -179,6 +179,7 @@ jobs:
             --pull \
             --platform linux/amd64 \
             --push \
+            --metadata-file "$RUNNER_TEMP/published-image.json" \
             --file ./docker_build/Dockerfile \
             --build-arg BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright \
             --build-arg BASE_IMAGE_VERSION=latest \
@@ -188,3 +189,19 @@ jobs:
             .
         env:
           DOCKER_TAGS: ${{ steps.meta.outputs.tags }}
+
+      - name: Warm Home GHCR cache with the published image
+        if: ${{ github.event_name != 'pull_request' && inputs.check_only != true }}
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
+            "$RUNNER_TEMP/published-image.json")"
+          image="ghcr-cache.hk8.haak.co/haakco/coder-workspace-php@$digest"
+          echo "Warming Home GHCR cache: $image"
+          # A pull-through cache cannot accept pushes. Fetch every amd64 layer
+          # by the build's immutable digest; discard the tar without loading Docker.
+          started=$SECONDS
+          regctl image export --platform linux/amd64 "$image" >/dev/null
+          echo "Home GHCR cache warmed in $((SECONDS - started))s: $image"
