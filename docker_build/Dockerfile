@@ -195,7 +195,8 @@ ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_
 # and never silently installs an older one, because a changed release is downloaded again.
 # The build tree stays a fresh mktemp so a rebuilt layer cannot pick up earlier objects.
 #
-# The ini files are deliberately NOT written here - see the layer after this one.
+# Final ini files belong to the next layer. pecl_http configuration runs PHP
+# and requires raphf loaded, so enable it temporarily during compilation.
 RUN --mount=type=cache,target=/pecl-cache \
     set -eu \
     && : > /tmp/php-extensions.tsv \
@@ -225,9 +226,17 @@ RUN --mount=type=cache,target=/pecl-cache \
            rm -rf "${work}" "${before}" "${after}"; \
            [ -n "${so}" ] \
              || { echo "building ${ext} for php@${version} produced no extension"; exit 1; }; \
+           if [ "${ext}" = "raphf" ]; then \
+             mkdir -p "${prefix}/conf.d"; \
+             printf 'extension=%s/%s\n' "${extdir}" "${so}" \
+               > "${prefix}/conf.d/00-build-raphf.ini"; \
+             "${prefix}/bin/php" -r 'exit(extension_loaded("raphf") ? 0 : 1);' \
+               || { echo "raphf build dependency did not load for php@${version}"; exit 1; }; \
+           fi; \
            printf '%s\t%s\t%s\n' "${version}" "${ext}" "${so}" >> /tmp/php-extensions.tsv; \
            echo "  built ${so} for php@${version}"; \
          done; \
+         rm -f "${prefix}/conf.d/00-build-raphf.ini"; \
        done
 
 # Write each extension's ini file from the build manifest.
