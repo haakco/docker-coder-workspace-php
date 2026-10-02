@@ -34,6 +34,9 @@ The Dockerfile uses the base image's `ccache` for PHP and PECL compilation.
 Its `/php-ccache` BuildKit cache mount survives source-layer invalidation on the
 same builder. The registry `:buildcache` remains the layer cache; it does not
 export the compiler cache mount. An empty mount still yields a complete image.
+`CCACHE_NOHASHDIR=1` lets debug-symbol builds reuse results across the plugin's
+random temporary directories; embedded debug paths may refer to an earlier
+build directory.
 The build logs print `ccache --show-stats` after each compile layer, so check
 cacheable calls and hits before claiming a speedup. A changed PHP version or
 compiler can still require a full compile.

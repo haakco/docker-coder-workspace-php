@@ -170,11 +170,14 @@ RUN --mount=type=secret,id=github_token \
 # Compiler output survives a parent-image change on this BuildKit builder. The mount
 # is disposable: an empty cache still produces the same PHP binaries.
 # /tmp contains the plugin extraction and extension build directories.
+# Those directories vary per build. Omitting CWD from the cache key allows the
+# same sources to hit despite -g; cached object debug paths may name an older
+# temporary build directory, which is not shipped as a useful source path.
 RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
-       CCACHE_BASEDIR=/tmp MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
        mise install php@8.3.31 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
@@ -192,7 +195,7 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
-       CCACHE_BASEDIR=/tmp MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
        mise install php@8.5.10 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
@@ -212,7 +215,7 @@ RUN --mount=type=cache,target=/pecl-cache \
     --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     set -eu \
     && export CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
-       CCACHE_BASEDIR=/tmp \
+       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 \
     && : > /tmp/php-extensions.tsv \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
          prefix="/opt/mise/installs/php/${version}"; \
