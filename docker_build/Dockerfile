@@ -165,11 +165,18 @@ RUN --mount=type=secret,id=github_token \
     && if ! grep -q HAAKCO_PIE_BEST_EFFORT "$post_install"; then \
          printf '\n-- HAAKCO_PIE_BEST_EFFORT: PIE setup is best-effort. Verification is\n-- unreliable on this image and no project requests PIE extensions, so a flaky\n-- check must not fail the install and trigger a rebuild on every start.\nlocal haakco_install_pie = php_packages.install_pie\nphp_packages.install_pie = function(sdkPath, version)\n  haakco_install_pie(sdkPath, version)\n  return true\nend\n' >> "$post_install"; \
        fi \
-    && chown -R 1000:1000 /opt/mise
+    && chown -R 1000:1000 "$MISE_DATA_DIR/plugins/php"
 
-RUN --mount=type=secret,id=github_token \
+# Compiler output survives a parent-image change on this BuildKit builder. The mount
+# is disposable: an empty cache still produces the same PHP binaries.
+# /tmp contains the plugin extraction and extension build directories.
+RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
+    --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.3.31
+    && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
+       CCACHE_BASEDIR=/tmp MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       mise install php@8.3.31 \
+    && CCACHE_DIR=/php-ccache ccache --show-stats
 
 # Bake the versions PHP workspaces pin: 8.3.31 for the WordPress project (awthy),
 # 8.5.10 for every other PHP project. One 8.5 patch is deliberate - two of them were two
@@ -181,9 +188,13 @@ RUN --mount=type=secret,id=github_token \
 # all, and it installs the http extension under its PECL package name, so the extension
 # never loads as http - which is why the verification below caught http missing. Every
 # extension is built from source, for each version, in the step below.
-RUN --mount=type=secret,id=github_token \
+RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
+    --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 mise install php@8.5.10
+    && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
+       CCACHE_BASEDIR=/tmp MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       mise install php@8.5.10 \
+    && CCACHE_DIR=/php-ccache ccache --show-stats
 
 ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.10"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
@@ -198,7 +209,10 @@ ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_
 # Final ini files belong to the next layer. pecl_http configuration runs PHP
 # and requires raphf loaded, so enable it temporarily during compilation.
 RUN --mount=type=cache,target=/pecl-cache \
+    --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     set -eu \
+    && export CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
+       CCACHE_BASEDIR=/tmp \
     && : > /tmp/php-extensions.tsv \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
          prefix="/opt/mise/installs/php/${version}"; \
@@ -237,7 +251,8 @@ RUN --mount=type=cache,target=/pecl-cache \
            echo "  built ${so} for php@${version}"; \
          done; \
          rm -f "${prefix}/conf.d/00-build-raphf.ini"; \
-       done
+       done \
+    && ccache --show-stats
 
 # Write each extension's ini file from the build manifest.
 #
@@ -272,7 +287,7 @@ RUN set -eu \
 # reports a tool as installed without rechecking how it was built, so a missing
 # flag here would otherwise only surface as a failed workspace start.
 RUN MISE_DATA_DIR=/opt/mise mise reshim \
-    && chown -R 1000:1000 /opt/mise \
+    && chown -R 1000:1000 /opt/mise/installs/php \
     && MISE_DATA_DIR=/opt/mise mise ls php \
     && core_extensions="ldap xsl sodium zip" \
     && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \

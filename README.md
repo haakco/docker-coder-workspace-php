@@ -28,6 +28,20 @@ Their Coder workspace templates in `prod-infra/htz/germ/tf-ha/080_coder/template
 select this image. A project with an exact PHP pin can use an immutable digest so
 its workspace always receives the build proven with that version.
 
+## Rebuild cache
+
+The Dockerfile uses the base image's `ccache` for PHP and PECL compilation.
+Its `/php-ccache` BuildKit cache mount survives source-layer invalidation on the
+same builder. The registry `:buildcache` remains the layer cache; it does not
+export the compiler cache mount. An empty mount still yields a complete image.
+The build logs print `ccache --show-stats` after each compile layer, so check
+cacheable calls and hits before claiming a speedup. A changed PHP version or
+compiler can still require a full compile.
+
+Only the newly added PHP plugin and PHP installations need their ownership
+changed. Avoid recursively changing `/opt/mise` from the parent image: the
+2026-10-02 rebuild spent roughly 7½ minutes in those broad passes.
+
 ## Adding a new PHP extension
 
 1. Find the Debian/Ubuntu `-dev` package that ships the extension's headers (e.g. `pkg-config --list-all` inside a build).
