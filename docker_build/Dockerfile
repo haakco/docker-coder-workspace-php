@@ -295,9 +295,10 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && core_extensions="ldap xsl sodium zip" \
     && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
     && for version in ${PHP_EXTENSION_VERSIONS}; do \
+         modules="$(MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m)" \
+           || { echo "could not list extensions for php@${version}"; exit 1; }; \
          for ext in ${core_extensions} ${pecl_extensions}; do \
-           MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m 2>/dev/null \
-             | grep -qix "$ext" \
+           printf '%s\n' "$modules" | grep -qix "$ext" \
              || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
          done; \
        done \
