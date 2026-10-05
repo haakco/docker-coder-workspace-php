@@ -332,6 +332,7 @@ dpkg -s libgd3 >/dev/null
 pkg-config --exists libxml-2.0
 test -d /ms-playwright
 test -f /etc/coder-skel/.pi/agent/settings.json
+node /usr/local/lib/smoke-playwright-mcp.cjs
 echo SMOKE_OK
 EOF
 
