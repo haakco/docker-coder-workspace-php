@@ -184,7 +184,7 @@ jobs:
       - name: Warm Home GHCR cache with the published image
         if: ${{ github.event_name != 'pull_request' && inputs.check_only != true }}
         shell: bash
-        timeout-minutes: 30
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
@@ -192,10 +192,17 @@ jobs:
           registry="ghcr.ghcr-cache.svc.cluster.local:5000"
           image="$registry/haakco/coder-workspace-php@$digest"
           echo "Warming Home GHCR cache: $image"
-          # A pull-through cache cannot accept pushes. Fetch every amd64 layer
-          # by the build's immutable digest; discard the tar without loading Docker.
+          # Fetch blobs directly: image export can stall while assembling its tar.
+          # Read the complete amd64 manifest and fail on any unsuccessful blob.
           started=$SECONDS
-          # Runners are in Home; use the existing HTTP service inside the cluster.
-          regctl --host "reg=$registry,tls=disabled" \
-            image export --platform linux/amd64 "$image" >/dev/null
-          echo "Home GHCR cache warmed in $((SECONDS - started))s: $image"
+          manifest="$(regctl --host "reg=$registry,tls=disabled" \
+            manifest get --platform linux/amd64 --format raw-body "$image")"
+          digests="$(printf '%s' "$manifest" | jq -er '.config.digest, .layers[].digest' | sort -u)"
+          blobs=0
+          while IFS= read -r blob; do
+            echo "Caching blob: $blob"
+            regctl --host "reg=$registry,tls=disabled" \
+              blob get "$registry/haakco/coder-workspace-php" "$blob" >/dev/null
+            blobs=$((blobs + 1))
+          done <<< "$digests"
+          echo "Home GHCR cache warmed $blobs blobs in $((SECONDS - started))s: $image"
