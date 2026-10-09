@@ -290,7 +290,7 @@ RUN set -eu \
 # reports a tool as installed without rechecking how it was built, so a missing
 # flag here would otherwise only surface as a failed workspace start.
 RUN MISE_DATA_DIR=/opt/mise mise reshim \
-    && chown -R 1000:1000 /opt/mise/installs/php \
+    && chown -R 1000:1000 /opt/mise/installs/php /opt/mise/downloads/php \
     && MISE_DATA_DIR=/opt/mise mise ls php \
     && core_extensions="ldap xsl sodium zip" \
     && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
@@ -328,6 +328,8 @@ set -e
 node --version
 corepack --version
 pi --version
+# Runtime PHP upgrades must be able to download as the workspace user.
+test -w /opt/mise/downloads/php
 dpkg -s libgd3 >/dev/null
 pkg-config --exists libxml-2.0
 test -d /ms-playwright

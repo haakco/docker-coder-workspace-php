@@ -45,8 +45,8 @@ Extension validation lists modules once per PHP version and checks the complete
 required set against that output. A missing module or failed module-list command
 still fails the build; command errors remain visible in the log.
 
-Only the newly added PHP plugin and PHP installations need their ownership
-changed. Avoid recursively changing `/opt/mise` from the parent image: the
+Only the newly added PHP plugin, PHP installations and PHP download directory
+need their ownership changed. Avoid recursively changing `/opt/mise` from the parent image: the
 2026-10-02 rebuild spent roughly 7½ minutes in those broad passes.
 
 ## Adding a new PHP extension
