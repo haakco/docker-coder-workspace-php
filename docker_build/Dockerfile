@@ -182,10 +182,9 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
 # Bake the versions PHP workspaces pin: 8.3.31 for the WordPress project (awthy),
-# 8.5.10 for every other PHP project. One 8.5 patch is deliberate - two of them were two
-# near-identical source builds to compile, verify and ship, and a project could only be
-# on whichever one the image happened to carry. A project that moves onto a different
-# version needs a matching install and extension check below.
+# 8.5.10 for existing PHP projects, and 8.5.11 for Hosting's current pin.
+# Keep both patches while consumers request them; a missing patch is compiled
+# again on every workspace restart because /opt/mise is not persistent.
 #
 # These versions do not use the plugin's PECL path. It cannot build PECL extensions on 8.5 at
 # all, and it installs the http extension under its PECL package name, so the extension
@@ -199,7 +198,15 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
        mise install php@8.5.10 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
-ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.10"
+RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
+    --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
+       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       mise install php@8.5.11 \
+    && CCACHE_DIR=/php-ccache ccache --show-stats
+
+ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.10 8.5.11"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 
 # Build the extensions from source and record what each one produced.
