@@ -181,10 +181,9 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
        mise install php@8.3.31 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
-# Bake the versions PHP workspaces pin: 8.3.31 for the WordPress project (awthy),
-# 8.5.10 for existing PHP projects, and 8.5.11 for Hosting's current pin.
-# Keep both patches while consumers request them; a missing patch is compiled
-# again on every workspace restart because /opt/mise is not persistent.
+# Bake the versions PHP workspaces pin: 8.3.31 for WordPress (awthy) and
+# 8.5.11 for every PHP 8.5 project. Keep one 8.5 patch so the image builds once
+# and consumers reuse it instead of compiling a missing patch at startup.
 #
 # These versions do not use the plugin's PECL path. It cannot build PECL extensions on 8.5 at
 # all, and it installs the http extension under its PECL package name, so the extension
@@ -195,18 +194,10 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
        CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
-       mise install php@8.5.10 \
-    && CCACHE_DIR=/php-ccache ccache --show-stats
-
-RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
-    --mount=type=secret,id=github_token \
-    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
-    && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
-       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
        mise install php@8.5.11 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
-ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.10 8.5.11"
+ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.11"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 
 # Build the extensions from source and record what each one produced.
@@ -337,6 +328,9 @@ corepack --version
 pi --version
 # Runtime PHP upgrades must be able to download as the workspace user.
 test -w /opt/mise/downloads/php
+for php85 in /opt/mise/installs/php/8.5.*; do
+    test "$php85" = /opt/mise/installs/php/8.5.11
+done
 dpkg -s libgd3 >/dev/null
 pkg-config --exists libxml-2.0
 test -d /ms-playwright

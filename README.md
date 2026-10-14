@@ -11,9 +11,8 @@ Build-time headers for common PHP core extensions (xml, openssl, curl, gd with a
 
 ## Who uses it
 
-The Dockerfile bakes PHP 8.3.31, 8.5.10 and 8.5.11 with the shared core and PECL extension
-set. Hosting pins 8.5.11; existing consumers still request 8.5.10, so both patches
-remain installed. awthy keeps 8.3.31 because it is a WordPress
+The Dockerfile bakes PHP 8.3.31 and 8.5.11 with the shared core and PECL extension
+set. PHP 8.5 projects share the single 8.5.11 patch. awthy keeps 8.3.31 because it is a WordPress
 project. A version missing from this image is compiled in every new workspace Pod
 because `/opt/mise` is not a persistent volume.
 
