@@ -139,7 +139,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # inside a RUN ends the instruction, so anything after its terminator is parsed as
 # a new Dockerfile instruction and the build fails with "unknown instruction".
 # -----------------------------------------------------------------------------
-ARG MISE_PHP_PLUGIN="https://github.com/verzly/mise-php#latest"
+ARG MISE_PHP_PLUGIN="https://github.com/haakco/mise-php#096907cce61149ccb0dc6a061a3efcd8d1ee9d14"
 ARG PHP_EXTRA_CONFIGURE_OPTIONS="--with-ldap --with-pgsql --with-sodium --with-xsl --with-zip"
 RUN --mount=type=secret,id=github_token \
     set -eu \
@@ -150,7 +150,7 @@ RUN --mount=type=secret,id=github_token \
     # Fail loudly if the plugin is not the one this build depends on. mise happily
     # falls back to its built-in backend, which compiles PHP but ships no build
     # dependencies, and the only symptom is an unrelated configure error later.
-    && mise plugins ls --urls | grep -q 'verzly/mise-php' \
+    && mise plugins ls --urls | grep -q 'haakco/mise-php' \
     && touch /root/.config/mise/config.toml \
     && mise config set -f /root/.config/mise/config.toml \
          env._.php.extra_configure_options --type string -- "${PHP_EXTRA_CONFIGURE_OPTIONS}" \
