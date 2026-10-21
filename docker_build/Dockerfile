@@ -158,7 +158,7 @@ RUN --mount=type=secret,id=github_token \
     # every version, and the plugin refuses its PECL path on PHP 8.5 or newer with "PECL is
     # not available for PHP 8.5.5 in this plugin", because 8.5 no longer ships the pecl
     # binary. The list is passed as an environment variable to the one install that can use
-    # it instead - see the php@8.3.31 layer - and 8.5 gets the same extensions built from
+    # it instead - see the php@8.3.36 layer - and 8.5 gets the same extensions built from
     # source in the layer after it.
     && post_install="$MISE_DATA_DIR/plugins/php/hooks/post_install.lua" \
     && [ -f "$post_install" ] \
@@ -178,10 +178,10 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
        CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
-       mise install php@8.3.31 \
+       mise install php@8.3.36 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
-# Bake the versions PHP workspaces pin: 8.3.31 for WordPress (awthy) and
+# Bake the versions PHP workspaces pin: 8.3.36 for WordPress (awthy) and
 # 8.5.12 for every PHP 8.5 project. Keep one 8.5 patch so the image builds once
 # and consumers reuse it instead of compiling a missing patch at startup.
 #
@@ -197,7 +197,7 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
        mise install php@8.5.12 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
-ARG PHP_EXTENSION_VERSIONS="8.3.31 8.5.12"
+ARG PHP_EXTENSION_VERSIONS="8.3.36 8.5.12"
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 
 # Build the extensions from source and record what each one produced.
@@ -328,8 +328,10 @@ corepack --version
 pi --version
 # Runtime PHP upgrades must be able to download as the workspace user.
 test -w /opt/mise/downloads/php
-for php85 in /opt/mise/installs/php/8.5.*; do
-    test "$php85" = /opt/mise/installs/php/8.5.12
+for version in 8.3.36 8.5.12; do
+    php="/opt/mise/installs/php/${version}/bin/php"
+    test -x "$php"
+    test "$("$php" -r 'echo PHP_VERSION;')" = "$version"
 done
 dpkg -s libgd3 >/dev/null
 pkg-config --exists libxml-2.0
