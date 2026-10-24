@@ -167,6 +167,8 @@ RUN --mount=type=secret,id=github_token \
        fi \
     && chown -R 1000:1000 "$MISE_DATA_DIR/plugins/php"
 
+ARG CCACHE_REMOTE_STORAGE=""
+
 # Compiler output survives a parent-image change on this BuildKit builder. The mount
 # is disposable: an empty cache still produces the same PHP binaries.
 # /tmp contains the plugin extraction and extension build directories.

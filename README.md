@@ -32,6 +32,13 @@ The Dockerfile uses the base image's `ccache` for PHP and PECL compilation.
 Its `/php-ccache` BuildKit cache mount survives source-layer invalidation on the
 same builder. The registry `:buildcache` remains the layer cache; it does not
 export the compiler cache mount. An empty mount still yields a complete image.
+CI forwards the runner's `CCACHE_REMOTE_STORAGE` into the build as an optional
+build argument. When configured, ccache checks `/php-ccache` first, then uses the
+shared HTTP cache so different builders and replacement builder Pods can reuse
+compiler outputs. Each client keeps its own local cache; no client shares a
+filesystem mount. Local builds default to local caching only. The endpoint is
+private and contains no credentials; remote failures fall back to compilation.
+This setting is build-only and is not baked into the workspace environment.
 `CCACHE_NOHASHDIR=1` lets debug-symbol builds reuse results across the plugin's
 random temporary directories; embedded debug paths may refer to an earlier
 build directory.
