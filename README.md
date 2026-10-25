@@ -29,6 +29,9 @@ its workspace always receives the build proven with that version.
 ## Rebuild cache
 
 The Dockerfile uses the base image's `ccache` for PHP and PECL compilation.
+The existing APT layer installs the PHP plugin's required packages once. Both PHP
+source installs use its supported `PHP_SKIP_DEPS=1` option to avoid repeating package
+updates; the separate PECL build and extension checks remain in place.
 Its `/php-ccache` BuildKit cache mount survives source-layer invalidation on the
 same builder. The registry `:buildcache` remains the layer cache; it does not
 export the compiler cache mount. An empty mount still yields a complete image.

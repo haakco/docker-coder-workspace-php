@@ -51,6 +51,7 @@ RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng && \
     fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git gettext zlib1g-dev libgd-dev \
     libxml2-dev libssl-dev libcurl4-openssl-dev \
     libavif-dev libjpeg-dev libpng-dev libwebp-dev libxpm-dev libonig-dev \
     libzip-dev libsqlite3-dev libreadline-dev \
@@ -179,7 +180,7 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
-       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 PHP_SKIP_DEPS=1 \
        mise install php@8.3.36 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
@@ -195,7 +196,7 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
     --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
-       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 \
+       CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 MISE_DATA_DIR=/opt/mise MISE_YES=1 PHP_VERBOSE=1 PHP_SKIP_DEPS=1 \
        mise install php@8.5.12 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
