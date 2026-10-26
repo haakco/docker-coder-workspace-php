@@ -366,10 +366,19 @@ RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/
     set -eu; \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     export CARGO_TARGET_DIR=/var/cache/coder-php-rust-target; \
-    export RUSTC_WRAPPER=/usr/local/bin/sccache CARGO_INCREMENTAL=0; \
-    export SCCACHE_DIR=/var/cache/coder-php-sccache; \
-    export SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SKIP_CACHE_CHECK=true; \
     export MISE_DATA_DIR=/opt/mise MISE_YES=1; \
+    # sccache reaches this image through playwright, which reaches it through base.
+    # A merge or publish that lands here before those two are rebuilt would
+    # otherwise fail on a missing RUSTC_WRAPPER. Caching is an optimisation, not a
+    # correctness requirement: warn and build uncached instead of breaking the
+    # image, exactly as the workspace startup script guards the same binary.
+    if [ -x /usr/local/bin/sccache ]; then \
+      export RUSTC_WRAPPER=/usr/local/bin/sccache CARGO_INCREMENTAL=0; \
+      export SCCACHE_DIR=/var/cache/coder-php-sccache; \
+      export SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SKIP_CACHE_CHECK=true; \
+    else \
+      echo 'WARNING: sccache absent from the base image chain; Rust tools build uncached.' >&2; \
+    fi; \
     for spec in \
       "cargo:cargo-deny@${CARGO_DENY_VERSION}" \
       "cargo:cargo-machete@${CARGO_MACHETE_VERSION}" \
@@ -378,8 +387,10 @@ RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/
       "cargo:openapi-to-rust@${OPENAPI_TO_RUST_VERSION}"; do \
       mise install --jobs "${CARGO_BUILD_JOBS}" "$spec"; \
     done; \
-    /usr/local/bin/sccache --show-stats || echo 'Could not read sccache statistics.' >&2; \
-    /usr/local/bin/sccache --stop-server || echo 'Could not stop sccache server.' >&2
+    if [ -x /usr/local/bin/sccache ]; then \
+      /usr/local/bin/sccache --show-stats || echo 'Could not read sccache statistics.' >&2; \
+      /usr/local/bin/sccache --stop-server || echo 'Could not stop sccache server.' >&2; \
+    fi
 
 # Assert every tool landed in the shared runtime path and runs. A cargo:* backend
 # that installs elsewhere would leave the workspace compiling at start again,
