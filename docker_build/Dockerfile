@@ -43,6 +43,10 @@ FROM ${BASE_IMAGE_NAME}:${BASE_IMAGE_VERSION}
 
 ARG APT_PROXY=""
 ARG NPM_CONFIG_REGISTRY
+# Cache-mount ids are scoped per architecture so an arm64 build never reuses an
+# amd64 Cargo target or sccache object. A global ARG declared before FROM is not
+# visible here, so this has to be redeclared inside the stage.
+ARG TARGETARCH
 USER root
 RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng && \
     if [ -n "$APT_PROXY" ]; then \
@@ -313,6 +317,92 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
          fi; \
        done \
     && echo "php@${PHP_EXTENSION_VERSIONS} carry the core and PECL extension sets"
+
+# -----------------------------------------------------------------------------
+# Rust CLI toolchain, built here with the estate's compiler cache.
+#
+# Hosting pins rust, zig and five `cargo:*` tools in its own mise.toml. They are
+# not part of the baked shared set, so every workspace start ran `cargo install`
+# for all five, and the result landed in /opt/mise's writable container layer,
+# which a replacement Pod discards. Measured on hosting-dev3, 2026-10-26: all five
+# still compiling at 88.9s, with `zig` extraction starved behind them and a second
+# `mise install` in a terminal blocked on the install lock.
+#
+# This is the same shape as hosting's own Rust CI images (hosting-rust-ci-base and
+# hosting-rust-quality): sccache as RUSTC_WRAPPER, a Cargo target directory on a
+# BuildKit cache mount, and one tool per layer so a single pin bump does not
+# recompile the rest. ccache cannot do this - it wraps a C/C++ compiler and never
+# sees a rustc call.
+#
+# Versions track Hosting's mise.toml. They must: mise does not reuse a baked tool
+# at a different version, so drift here silently restores the per-start compile
+# this layer exists to remove.
+# -----------------------------------------------------------------------------
+ARG RUST_VERSION="1.99.1"
+ARG ZIG_VERSION="0.17.0"
+ARG CARGO_DENY_VERSION="0.20.2"
+ARG CARGO_MACHETE_VERSION="0.9.2"
+ARG CARGO_XWIN_VERSION="0.23.1"
+ARG CARGO_ZIGBUILD_VERSION="0.24.0"
+ARG OPENAPI_TO_RUST_VERSION="0.22.0"
+ARG CARGO_BUILD_JOBS=2
+
+# rustc and cargo first: every cargo:* backend below needs this toolchain.
+RUN --mount=type=secret,id=github_token \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && MISE_DATA_DIR=/opt/mise MISE_YES=1 \
+       mise install "rust@${RUST_VERSION}" "zig@${ZIG_VERSION}" \
+    && MISE_DATA_DIR=/opt/mise mise reshim
+
+# One Cargo target directory across all five tools: they overlap heavily on
+# crates (regex, globset, grep-*, bstr), and a per-tool target would compile each
+# copy separately. All mounts are disposable - an empty cache still produces the
+# same binaries.
+RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/coder-php-rust-target,sharing=locked \
+    --mount=type=cache,id=coder-php-rust-registry-${TARGETARCH},target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=coder-php-rust-git-${TARGETARCH},target=/root/.cargo/git,sharing=locked \
+    --mount=type=cache,id=coder-php-rust-sccache-${TARGETARCH},target=/var/cache/coder-php-sccache,sharing=locked \
+    --mount=type=secret,id=github_token \
+    set -eu; \
+    export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
+    export CARGO_TARGET_DIR=/var/cache/coder-php-rust-target; \
+    export RUSTC_WRAPPER=/usr/local/bin/sccache CARGO_INCREMENTAL=0; \
+    export SCCACHE_DIR=/var/cache/coder-php-sccache; \
+    export SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SKIP_CACHE_CHECK=true; \
+    export MISE_DATA_DIR=/opt/mise MISE_YES=1; \
+    for spec in \
+      "cargo:cargo-deny@${CARGO_DENY_VERSION}" \
+      "cargo:cargo-machete@${CARGO_MACHETE_VERSION}" \
+      "cargo:cargo-xwin@${CARGO_XWIN_VERSION}" \
+      "cargo:cargo-zigbuild@${CARGO_ZIGBUILD_VERSION}" \
+      "cargo:openapi-to-rust@${OPENAPI_TO_RUST_VERSION}"; do \
+      mise install --jobs "${CARGO_BUILD_JOBS}" "$spec"; \
+    done; \
+    /usr/local/bin/sccache --show-stats || echo 'Could not read sccache statistics.' >&2; \
+    /usr/local/bin/sccache --stop-server || echo 'Could not stop sccache server.' >&2
+
+# Assert every tool landed in the shared runtime path and runs. A cargo:* backend
+# that installs elsewhere would leave the workspace compiling at start again,
+# and mise reports that as success.
+RUN set -eu; \
+    export MISE_DATA_DIR=/opt/mise MISE_AUTO_INSTALL=false MISE_EXEC_AUTO_INSTALL=false; \
+    for tool in rust zig \
+                cargo:cargo-deny cargo:cargo-machete cargo:cargo-xwin \
+                cargo:cargo-zigbuild cargo:openapi-to-rust; do \
+      install_path="$(mise where "$tool")"; \
+      case "$install_path" in \
+        "$MISE_DATA_DIR"/installs/*) ;; \
+        *) printf 'mise installed %s outside the shared runtime path: %s\n' \
+             "$tool" "$install_path" >&2; exit 1 ;; \
+      esac; \
+    done; \
+    mise exec -- rustc --version; \
+    mise exec -- zig version; \
+    mise exec -- cargo deny --version; \
+    mise exec -- cargo machete --version; \
+    mise exec -- openapi-to-rust --version; \
+    chown -R 1000:1000 /opt/mise/installs/rust /opt/mise/installs/zig \
+                       /opt/mise/installs/cargo-* /opt/mise/downloads
 
 RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng
 
