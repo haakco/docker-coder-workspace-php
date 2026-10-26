@@ -347,9 +347,26 @@ ARG CARGO_ZIGBUILD_VERSION="0.24.0"
 ARG OPENAPI_TO_RUST_VERSION="0.22.0"
 ARG CARGO_BUILD_JOBS=2
 
+# mise installs a toolchain but does not select a version for its shims. Without a
+# config entry naming rust, the `cargo` shim resolves to no version and every
+# cargo:* backend below fails with "No version is set for shim: cargo" - which is
+# exactly what broke the first publish of this layer on 2026-10-26.
+#
+# The pins go in a build-only file rather than /etc/mise/config.toml so runtime
+# selection is untouched: workspaces keep choosing their tools from the project's
+# mise.toml and the dotfiles config, never from this image. The file is removed by
+# the assertion layer, so the published image carries no build-time selection.
+RUN printf '[tools]\nrust = "%s"\nzig = "%s"\n"cargo:cargo-deny" = "%s"\n"cargo:cargo-machete" = "%s"\n"cargo:cargo-xwin" = "%s"\n"cargo:cargo-zigbuild" = "%s"\n"cargo:openapi-to-rust" = "%s"\n' \
+      "${RUST_VERSION}" "${ZIG_VERSION}" \
+      "${CARGO_DENY_VERSION}" "${CARGO_MACHETE_VERSION}" \
+      "${CARGO_XWIN_VERSION}" "${CARGO_ZIGBUILD_VERSION}" \
+      "${OPENAPI_TO_RUST_VERSION}" > /opt/mise-build-pins.toml \
+    && cat /opt/mise-build-pins.toml
+
 # rustc and cargo first: every cargo:* backend below needs this toolchain.
 RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
+    && export MISE_GLOBAL_CONFIG_FILE=/opt/mise-build-pins.toml \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 \
        mise install "rust@${RUST_VERSION}" "zig@${ZIG_VERSION}" \
     && MISE_DATA_DIR=/opt/mise mise reshim
@@ -367,6 +384,9 @@ RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)"; \
     export CARGO_TARGET_DIR=/var/cache/coder-php-rust-target; \
     export MISE_DATA_DIR=/opt/mise MISE_YES=1; \
+    # Same build-only pins as the rust layer: the cargo:* backends need a selected
+    # cargo to run their builds.
+    export MISE_GLOBAL_CONFIG_FILE=/opt/mise-build-pins.toml; \
     # sccache reaches this image through playwright, which reaches it through base.
     # A merge or publish that lands here before those two are rebuilt would
     # otherwise fail on a missing RUSTC_WRAPPER. Caching is an optimisation, not a
@@ -397,6 +417,7 @@ RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/
 # and mise reports that as success.
 RUN set -eu; \
     export MISE_DATA_DIR=/opt/mise MISE_AUTO_INSTALL=false MISE_EXEC_AUTO_INSTALL=false; \
+    export MISE_GLOBAL_CONFIG_FILE=/opt/mise-build-pins.toml; \
     for tool in rust zig \
                 cargo:cargo-deny cargo:cargo-machete cargo:cargo-xwin \
                 cargo:cargo-zigbuild cargo:openapi-to-rust; do \
@@ -413,7 +434,9 @@ RUN set -eu; \
     mise exec -- cargo machete --version; \
     mise exec -- openapi-to-rust --version; \
     chown -R 1000:1000 /opt/mise/installs/rust /opt/mise/installs/zig \
-                       /opt/mise/installs/cargo-* /opt/mise/downloads
+                       /opt/mise/installs/cargo-* /opt/mise/downloads; \
+    # Build-time tool selection must not ship: runtime keeps its own config.
+    rm -f /opt/mise-build-pins.toml
 
 RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng
 
