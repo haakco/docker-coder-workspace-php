@@ -187,13 +187,20 @@ jobs:
       - name: Warm Home GHCR cache with the published image
         if: ${{ github.event_name != 'pull_request' && inputs.check_only != true }}
         shell: bash
-        timeout-minutes: 10
+        # Base and playwright use the same budget with `image export`. This step
+        # fetches blobs individually instead, because image export can stall while
+        # assembling its tar, and per-blob fetching is slower. The php image is the
+        # largest of the three (~92 blobs / 7 GB) and outgrew a 10-minute budget:
+        # on 2026-10-26 it cached 78 blobs and was killed at the timeout, which
+        # marked a successful publish as a failed run.
+        timeout-minutes: 30
         run: |
           set -euo pipefail
           digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' \
             "$RUNNER_TEMP/published-image.json")"
           registry="ghcr.ghcr-cache.svc.cluster.local:5000"
-          image="$registry/haakco/coder-workspace-php@$digest"
+          repository="haakco/coder-workspace-php"
+          image="$registry/$repository@$digest"
           echo "Warming Home GHCR cache: $image"
           # Fetch blobs directly: image export can stall while assembling its tar.
           # Read the complete amd64 manifest and fail on any unsuccessful blob.
@@ -201,11 +208,12 @@ jobs:
           manifest="$(regctl --host "reg=$registry,tls=disabled" \
             manifest get --platform linux/amd64 --format raw-body "$image")"
           digests="$(printf '%s' "$manifest" | jq -er '.config.digest, .layers[].digest' | sort -u)"
-          blobs=0
-          while IFS= read -r blob; do
-            echo "Caching blob: $blob"
+          blobs="$(printf '%s\n' "$digests" | grep -c .)"
+          # Fetch concurrently. regctl takes one blob per invocation and the
+          # registry is in-cluster, so the bandwidth is already there; sequential
+          # fetching is what outgrew the budget. xargs appends each digest as the
+          # final argument, and any non-zero regctl fails the step through pipefail.
+          printf '%s\n' "$digests" | xargs -r -P 8 -n 1 \
             regctl --host "reg=$registry,tls=disabled" \
-              blob get "$registry/haakco/coder-workspace-php" "$blob" >/dev/null
-            blobs=$((blobs + 1))
-          done <<< "$digests"
+            blob get "$registry/$repository" >/dev/null
           echo "Home GHCR cache warmed $blobs blobs in $((SECONDS - started))s: $image"
