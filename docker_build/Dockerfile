@@ -345,6 +345,10 @@ ARG CARGO_MACHETE_VERSION="0.9.2"
 ARG CARGO_XWIN_VERSION="0.23.1"
 ARG CARGO_ZIGBUILD_VERSION="0.24.0"
 ARG OPENAPI_TO_RUST_VERSION="0.22.0"
+# With cargo-binstall present, mise installs each cargo:* tool from its author-published
+# release binary and compiles only a tool that publishes none (openapi-to-rust). Compiling all
+# five took ~24 minutes on two jobs and pushed the build past its 45-minute limit (2026-11-12/13).
+ARG CARGO_BINSTALL_VERSION="1.27.0"
 ARG CARGO_BUILD_JOBS=2
 
 # mise installs a toolchain but does not select a version for its shims. Without a
@@ -356,8 +360,8 @@ ARG CARGO_BUILD_JOBS=2
 # selection is untouched: workspaces keep choosing their tools from the project's
 # mise.toml and the dotfiles config, never from this image. The file is removed by
 # the assertion layer, so the published image carries no build-time selection.
-RUN printf '[tools]\nrust = "%s"\nzig = "%s"\n"cargo:cargo-deny" = "%s"\n"cargo:cargo-machete" = "%s"\n"cargo:cargo-xwin" = "%s"\n"cargo:cargo-zigbuild" = "%s"\n"cargo:openapi-to-rust" = "%s"\n' \
-      "${RUST_VERSION}" "${ZIG_VERSION}" \
+RUN printf '[tools]\nrust = "%s"\nzig = "%s"\ncargo-binstall = "%s"\n"cargo:cargo-deny" = "%s"\n"cargo:cargo-machete" = "%s"\n"cargo:cargo-xwin" = "%s"\n"cargo:cargo-zigbuild" = "%s"\n"cargo:openapi-to-rust" = "%s"\n' \
+      "${RUST_VERSION}" "${ZIG_VERSION}" "${CARGO_BINSTALL_VERSION}" \
       "${CARGO_DENY_VERSION}" "${CARGO_MACHETE_VERSION}" \
       "${CARGO_XWIN_VERSION}" "${CARGO_ZIGBUILD_VERSION}" \
       "${OPENAPI_TO_RUST_VERSION}" > /opt/mise-build-pins.toml \
@@ -368,7 +372,7 @@ RUN --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && export MISE_GLOBAL_CONFIG_FILE=/opt/mise-build-pins.toml \
     && MISE_DATA_DIR=/opt/mise MISE_YES=1 \
-       mise install "rust@${RUST_VERSION}" "zig@${ZIG_VERSION}" \
+       mise install "rust@${RUST_VERSION}" "zig@${ZIG_VERSION}" "cargo-binstall@${CARGO_BINSTALL_VERSION}" \
     && MISE_DATA_DIR=/opt/mise mise reshim
 
 # One Cargo target directory across all five tools: they overlap heavily on
