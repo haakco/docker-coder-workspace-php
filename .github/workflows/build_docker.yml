@@ -219,11 +219,23 @@ jobs:
             manifest get --platform linux/amd64 --format raw-body "$image")"
           digests="$(printf '%s' "$manifest" | jq -er '.config.digest, .layers[].digest' | sort -u)"
           blobs="$(printf '%s\n' "$digests" | grep -c .)"
-          # Fetch concurrently. regctl takes one blob per invocation and the
-          # registry is in-cluster, so the bandwidth is already there; sequential
-          # fetching is what outgrew the budget. xargs appends each digest as the
-          # final argument, and any non-zero regctl fails the step through pipefail.
-          printf '%s\n' "$digests" | xargs -r -P 8 -n 1 \
-            regctl --host "reg=$registry,tls=disabled" \
-            blob get "$registry/$repository" >/dev/null
+          # Retry each blob. The in-cluster registry answers short reads under
+          # concurrent fetches ("Failed to recover from short read" / unexpected
+          # EOF), which failed this step on 2026-11-25 and left the Home cache
+          # cold - the next workspace start then pulled 7 GB from GHCR and looked
+          # stuck in PodInitializing for ten minutes. One attempt per blob is not
+          # enough for a step whose whole job is to make that pull unnecessary.
+          export registry repository
+          printf '%s\n' "$digests" | xargs -r -P 8 -n 1 sh -c '
+            for attempt in 1 2 3 4 5; do
+              if regctl --host "reg=$registry,tls=disabled" \
+                   blob get "$registry/$repository" "$1" >/dev/null 2>&1; then
+                exit 0
+              fi
+              echo "blob $1 attempt $attempt failed; retrying" >&2
+              sleep $((attempt * 5))
+            done
+            echo "blob $1 could not be fetched after 5 attempts" >&2
+            exit 1
+          ' _
           echo "Home GHCR cache warmed $blobs blobs in $((SECONDS - started))s: $image"
