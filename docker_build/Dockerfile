@@ -180,7 +180,7 @@ ARG CCACHE_REMOTE_STORAGE=""
 # Those directories vary per build. Omitting CWD from the cache key allows the
 # same sources to hit despite -g; cached object debug paths may name an older
 # temporary build directory, which is not shipped as a useful source path.
-RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
+RUN --mount=type=cache,id=coder-php-ccache-${TARGETARCH},target=/php-ccache \
     --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
@@ -196,7 +196,7 @@ RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
 # all, and it installs the http extension under its PECL package name, so the extension
 # never loads as http - which is why the verification below caught http missing. Every
 # extension is built from source, for each version, in the step below.
-RUN --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
+RUN --mount=type=cache,id=coder-php-ccache-${TARGETARCH},target=/php-ccache \
     --mount=type=secret,id=github_token \
     export GITHUB_TOKEN="$(cat /run/secrets/github_token 2>/dev/null || true)" \
     && CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
@@ -217,7 +217,7 @@ ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_
 # Final ini files belong to the next layer. pecl_http configuration runs PHP
 # and requires raphf loaded, so enable it temporarily during compilation.
 RUN --mount=type=cache,target=/pecl-cache \
-    --mount=type=cache,id=coder-php-ccache-amd64,target=/php-ccache \
+    --mount=type=cache,id=coder-php-ccache-${TARGETARCH},target=/php-ccache \
     set -eu \
     && export CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/php-ccache \
        CCACHE_BASEDIR=/tmp CCACHE_NOHASHDIR=1 \
@@ -330,9 +330,12 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
 #
 # This is the same shape as hosting's own Rust CI images (hosting-rust-ci-base and
 # hosting-rust-quality): sccache as RUSTC_WRAPPER, a Cargo target directory on a
-# BuildKit cache mount, and one tool per layer so a single pin bump does not
-# recompile the rest. ccache cannot do this - it wraps a C/C++ compiler and never
-# sees a rustc call.
+# BuildKit cache mount. ccache cannot do this - it wraps a C/C++ compiler and
+# never sees a rustc call.
+#
+# The five tools share one layer on purpose: cargo-binstall supplies four of them
+# as release binaries, so a pin bump costs a download rather than a compile, and
+# five near-identical RUN blocks would be maintenance for almost no cache reuse.
 #
 # Versions track Hosting's mise.toml. They must: mise does not reuse a baked tool
 # at a different version, so drift here silently restores the per-start compile
@@ -379,6 +382,15 @@ RUN --mount=type=secret,id=github_token \
 # crates (regex, globset, grep-*, bstr), and a per-tool target would compile each
 # copy separately. All mounts are disposable - an empty cache still produces the
 # same binaries.
+# The estate already serves a shared sccache through the runner's WebDAV
+# endpoint - hosting-rust-ci-base points at it. Without these two values sccache
+# writes to the container's cache mount only, and a replacement BuildKit worker
+# starts from zero: measured 2026-11-21, the Rust layer ran 553 compile requests
+# with 0 cache hits. Both arrive from the runner; an empty endpoint leaves the
+# local cache as the only one, which is correct for a fleet that has none.
+ARG SCCACHE_WEBDAV_ENDPOINT=""
+ARG SCCACHE_WEBDAV_KEY_PREFIX="httpcache/rust"
+
 RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/coder-php-rust-target,sharing=locked \
     --mount=type=cache,id=coder-php-rust-registry-${TARGETARCH},target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,id=coder-php-rust-git-${TARGETARCH},target=/root/.cargo/git,sharing=locked \
@@ -400,6 +412,10 @@ RUN --mount=type=cache,id=coder-php-rust-target-${TARGETARCH},target=/var/cache/
       export RUSTC_WRAPPER=/usr/local/bin/sccache CARGO_INCREMENTAL=0; \
       export SCCACHE_DIR=/var/cache/coder-php-sccache; \
       export SCCACHE_IGNORE_SERVER_IO_ERROR=1 SCCACHE_SKIP_CACHE_CHECK=true; \
+      if [ -n "$SCCACHE_WEBDAV_ENDPOINT" ]; then \
+        export SCCACHE_WEBDAV_ENDPOINT SCCACHE_WEBDAV_DISABLE_CREATE_DIR=true; \
+        export SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX"; \
+      fi; \
     else \
       echo 'WARNING: sccache absent from the base image chain; Rust tools build uncached.' >&2; \
     fi; \
