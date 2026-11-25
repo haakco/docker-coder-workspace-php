@@ -39,14 +39,42 @@
 ARG BASE_IMAGE_NAME=ghcr.io/haakco/coder-workspace-playwright
 ARG BASE_IMAGE_VERSION=latest
 
-FROM ${BASE_IMAGE_NAME}:${BASE_IMAGE_VERSION}
+# Declared globally because both stages verify the same set: the toolchain stage
+# builds it, the final stage proves it still loads where the image ships it.
+ARG PHP_EXTENSION_VERSIONS="8.3.37 8.5.13"
+
+# Declared globally because a FROM may only use ARGs declared before the first
+# FROM: the toolchain stage runs on a stable Ubuntu image, deliberately not on
+# this image's base chain.
+ARG TOOLCHAIN_IMAGE_NAME=ubuntu
+ARG TOOLCHAIN_IMAGE_VERSION=26.04
+
+# sccache is the estate's Rust compiler cache and the runner image owns the
+# binary. The toolchain stage below is not built on this image's base chain, so
+# it copies sccache in rather than inheriting it.
+ARG SCCACHE_IMAGE_NAME=ghcr.io/haakco/actions-runner
+ARG SCCACHE_IMAGE_VERSION=2
+FROM ${SCCACHE_IMAGE_NAME}:${SCCACHE_IMAGE_VERSION} AS sccache-source
+
+# -----------------------------------------------------------------------------
+# Toolchain stage
+#
+# The PHP source compiles and the Rust toolchain are the expensive part of this
+# image - a full rebuild measured 39m32s on 2026-11-21, 931s of it the two PHP
+# compiles - and none of it depends on the layers above. Building them on a
+# stable Ubuntu image keeps them out of the base image's invalidation path: when
+# coder-workspace-playwright publishes a new digest (the weekly chain does that
+# every Sunday night), the final stage re-runs its apt install and its COPY
+# instead of recompiling PHP twice and every Rust tool.
+# -----------------------------------------------------------------------------
+FROM ${TOOLCHAIN_IMAGE_NAME}:${TOOLCHAIN_IMAGE_VERSION} AS toolchain
 
 ARG APT_PROXY=""
-ARG NPM_CONFIG_REGISTRY
 # Cache-mount ids are scoped per architecture so an arm64 build never reuses an
 # amd64 Cargo target or sccache object. A global ARG declared before FROM is not
 # visible here, so this has to be redeclared inside the stage.
 ARG TARGETARCH
+ARG PHP_EXTENSION_VERSIONS
 USER root
 RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng && \
     if [ -n "$APT_PROXY" ]; then \
@@ -54,8 +82,13 @@ RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng && \
         "$APT_PROXY" "$APT_PROXY" > /etc/apt/apt.conf.d/00apt-cacher-ng; \
     fi
 
+# Build dependencies: the runtime libraries the final stage also installs, plus
+# the compilers and code generators PHP's configure needs and the base image used
+# to supply. Keep the library list in step with the final stage's.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git gettext zlib1g-dev libgd-dev \
+    ca-certificates curl gnupg git gettext build-essential pkg-config \
+    autoconf automake bison flex re2c libtool ccache \
+    zlib1g-dev libgd-dev \
     libxml2-dev libssl-dev libcurl4-openssl-dev \
     libavif-dev libjpeg-dev libpng-dev libwebp-dev libxpm-dev libonig-dev \
     libzip-dev libsqlite3-dev libreadline-dev \
@@ -63,11 +96,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtidy-dev libxslt1-dev libsodium-dev \
     libpq-dev libgmp-dev libldap2-dev \
     libmagickwand-dev librdkafka-dev libzstd-dev \
-    # Runtime GD library. PHP projects previously installed this on every
-    # workspace start; baking it in keeps workspace startup from running
-    # apt-get update each boot.
     libgd3 \
     && rm -rf /var/lib/apt/lists/*
+
+# mise drives the PHP plugin; sccache is the Rust compiler cache.
+RUN curl -fsSL https://mise.jdx.dev/gpg-key.pub | gpg --dearmor -o /etc/apt/keyrings/mise-archive-keyring.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/mise-archive-keyring.gpg arch=$(dpkg --print-architecture)] \
+       https://mise.jdx.dev/deb stable main" \
+       | tee /etc/apt/sources.list.d/mise.list > /dev/null \
+    && apt-get update && apt-get install -y --no-install-recommends mise \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=sccache-source /usr/local/bin/sccache /usr/local/bin/sccache
+RUN mise --version && sccache --version
 
 # -----------------------------------------------------------------------------
 # PHP, compiled once here instead of in every workspace.
@@ -204,7 +244,7 @@ RUN --mount=type=cache,id=coder-php-ccache-${TARGETARCH},target=/php-ccache \
        mise install php@8.5.13 \
     && CCACHE_DIR=/php-ccache ccache --show-stats
 
-ARG PHP_EXTENSION_VERSIONS="8.3.37 8.5.13"
+ARG PHP_EXTENSION_VERSIONS
 ARG MISE_PHP_PECL_EXTENSIONS="igbinary msgpack redis imagick rdkafka raphf pecl_http pcov xdebug opentelemetry"
 
 # Build the extensions from source and record what each one produced.
@@ -291,32 +331,12 @@ RUN set -eu \
          done; \
        done
 
-# Prove the compile-time extensions the projects verify are actually present. mise
-# reports a tool as installed without rechecking how it was built, so a missing
-# flag here would otherwise only surface as a failed workspace start.
+# Reshim inside the toolchain stage so its own later layers (the Rust ones) can
+# resolve the PHP shims. The extension assertions run in the final stage, against
+# the image that actually ships them.
 RUN MISE_DATA_DIR=/opt/mise mise reshim \
     && chown -R 1000:1000 /opt/mise/installs/php /opt/mise/downloads/php \
-    && MISE_DATA_DIR=/opt/mise mise ls php \
-    && core_extensions="ldap xsl sodium zip" \
-    && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
-    && for version in ${PHP_EXTENSION_VERSIONS}; do \
-         modules="$(MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m)" \
-           || { echo "could not list extensions for php@${version}"; exit 1; }; \
-         for ext in ${core_extensions} ${pecl_extensions}; do \
-           printf '%s\n' "$modules" | grep -qix "$ext" \
-             || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
-         done; \
-       done \
-    && for version in ${PHP_EXTENSION_VERSIONS}; do \
-         # `php -m` lists xdebug either way, so the extension check above passes even
-         # when it is loaded as a normal extension. Fail the build instead of shipping a
-         # warning on every php start.
-         if grep -rqs '^extension=xdebug' "/opt/mise/installs/php/${version}/conf.d/"; then \
-           echo "php@${version} loads xdebug as a normal extension; it needs zend_extension"; \
-           exit 1; \
-         fi; \
-       done \
-    && echo "php@${PHP_EXTENSION_VERSIONS} carry the core and PECL extension sets"
+    && MISE_DATA_DIR=/opt/mise mise ls php
 
 # -----------------------------------------------------------------------------
 # Rust CLI toolchain, built here with the estate's compiler cache.
@@ -457,6 +477,78 @@ RUN set -eu; \
                        /opt/mise/installs/cargo-* /opt/mise/downloads; \
     # Build-time tool selection must not ship: runtime keeps its own config.
     rm -f /opt/mise-build-pins.toml
+
+# -----------------------------------------------------------------------------
+# Final image
+#
+# Everything above ran on a stable Ubuntu base, so only this stage re-runs when
+# coder-workspace-playwright publishes a new digest. The COPY merges the
+# toolchain stage's /opt/mise into the base image's own tree: directory copies
+# merge, so the shared tools the base bakes (node, go, python, dagger, ...) stay
+# in place and only the PHP and Rust trees are added.
+# -----------------------------------------------------------------------------
+FROM ${BASE_IMAGE_NAME}:${BASE_IMAGE_VERSION}
+
+ARG APT_PROXY=""
+ARG PHP_EXTENSION_VERSIONS
+USER root
+RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng && \
+    if [ -n "$APT_PROXY" ]; then \
+      printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' \
+        "$APT_PROXY" "$APT_PROXY" > /etc/apt/apt.conf.d/00apt-cacher-ng; \
+    fi
+
+# Runtime libraries, kept in step with the toolchain stage's list. PHP needs
+# them at run time; pkg-config and the -dev headers stay because a project can
+# still compile an extension in its workspace.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git gettext pkg-config zlib1g-dev libgd-dev \
+    libxml2-dev libssl-dev libcurl4-openssl-dev \
+    libavif-dev libjpeg-dev libpng-dev libwebp-dev libxpm-dev libonig-dev \
+    libzip-dev libsqlite3-dev libreadline-dev \
+    libicu-dev libfreetype6-dev libbz2-dev \
+    libtidy-dev libxslt1-dev libsodium-dev \
+    libpq-dev libgmp-dev libldap2-dev \
+    libmagickwand-dev librdkafka-dev libzstd-dev \
+    # Runtime GD library. PHP projects previously installed this on every
+    # workspace start; baking it in keeps workspace startup from running
+    # apt-get update each boot.
+    libgd3 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=toolchain /opt/mise /opt/mise
+
+# Reshim against what is actually installed here, and keep the tree writable so a
+# runtime PHP patch or cargo tool still installs as the workspace user.
+RUN MISE_DATA_DIR=/opt/mise mise reshim \
+    && chown -R 1000:1000 /opt/mise \
+    && MISE_DATA_DIR=/opt/mise mise ls php \
+    && MISE_DATA_DIR=/opt/mise mise ls rust
+
+# Prove the compile-time extensions the projects verify load in the shipped
+# image. mise reports a tool as installed without rechecking how it was built, and
+# this is also what proves the copied tree links against this stage's libraries.
+RUN set -eu \
+    && core_extensions="ldap xsl sodium zip" \
+    && pecl_extensions="igbinary msgpack redis imagick rdkafka raphf http pcov xdebug opentelemetry" \
+    && for version in ${PHP_EXTENSION_VERSIONS}; do \
+         modules="$(MISE_DATA_DIR=/opt/mise mise exec "php@${version}" -- php -m)" \
+           || { echo "could not list extensions for php@${version}"; exit 1; }; \
+         for ext in ${core_extensions} ${pecl_extensions}; do \
+           printf '%s\n' "$modules" | grep -qix "$ext" \
+             || { echo "php@${version} is missing the $ext extension"; exit 1; }; \
+         done; \
+       done \
+    && for version in ${PHP_EXTENSION_VERSIONS}; do \
+         # `php -m` lists xdebug either way, so the check above passes even when it
+         # is loaded as a normal extension. Fail the build instead of shipping a
+         # warning on every php start.
+         if grep -rqs '^extension=xdebug' "/opt/mise/installs/php/${version}/conf.d/"; then \
+           echo "php@${version} loads xdebug as a normal extension; it needs zend_extension"; \
+           exit 1; \
+         fi; \
+       done \
+    && echo "php@${PHP_EXTENSION_VERSIONS} carry the core and PECL extension sets"
 
 RUN rm -f /etc/apt/apt.conf.d/00apt-cacher-ng
 
