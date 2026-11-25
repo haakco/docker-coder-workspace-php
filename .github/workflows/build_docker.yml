@@ -31,7 +31,13 @@ jobs:
   build_and_push:
     name: Build and push workspace-php image
     runs-on: haakco-build
-    timeout-minutes: 45
+    # A full rebuild is legitimate and slow: measured 39m32s on 2026-11-21 and
+    # beyond 45m on 2026-11-25, because a new base-image digest re-runs the PHP
+    # source compiles and the Rust toolchain. At 45 minutes the limit could not
+    # tell a slow build from a hung one, and it killed a publish that was still
+    # working. This is a hang guard, not a performance target; the cache work in
+    # this workflow is what shortens the real path.
+    timeout-minutes: 75
     container:
       image: ghcr.io/haakco/actions-runner:2
       credentials:
