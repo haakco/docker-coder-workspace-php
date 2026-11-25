@@ -338,17 +338,17 @@ RUN MISE_DATA_DIR=/opt/mise mise reshim \
 # at a different version, so drift here silently restores the per-start compile
 # this layer exists to remove.
 # -----------------------------------------------------------------------------
-ARG RUST_VERSION="1.99.1"
-ARG ZIG_VERSION="0.17.0"
-ARG CARGO_DENY_VERSION="0.20.2"
-ARG CARGO_MACHETE_VERSION="0.9.2"
-ARG CARGO_XWIN_VERSION="0.23.1"
-ARG CARGO_ZIGBUILD_VERSION="0.24.0"
-ARG OPENAPI_TO_RUST_VERSION="0.22.0"
+ARG RUST_VERSION="1.100.0"
+ARG ZIG_VERSION="0.17.1"
+ARG CARGO_DENY_VERSION="0.22.0"
+ARG CARGO_MACHETE_VERSION="0.10.1"
+ARG CARGO_XWIN_VERSION="0.24.1"
+ARG CARGO_ZIGBUILD_VERSION="0.24.1"
+ARG OPENAPI_TO_RUST_VERSION="0.24.0"
 # With cargo-binstall present, mise installs each cargo:* tool from its author-published
 # release binary and compiles only a tool that publishes none (openapi-to-rust). Compiling all
 # five took ~24 minutes on two jobs and pushed the build past its 45-minute limit (2026-11-12/13).
-ARG CARGO_BINSTALL_VERSION="1.27.0"
+ARG CARGO_BINSTALL_VERSION="1.28.0"
 ARG CARGO_BUILD_JOBS=2
 
 # mise installs a toolchain but does not select a version for its shims. Without a
